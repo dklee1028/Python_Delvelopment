@@ -217,6 +217,6 @@ function rrmdir($d) {
 }
 function protect_dir($d) {
     if (!is_dir($d)) @mkdir($d, 0755, true);
-    if (!is_file("$d/.htaccess")) @file_put_contents("$d/.htaccess", "<IfModule mod_authz_core.c>Require all denied</IfModule>\n<IfModule !mod_authz_core.c>Order allow,deny\nDeny from all</IfModule>\n");
+    if (!is_file("$d/.htaccess")) @file_put_contents("$d/.htaccess", "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
     if (!is_file("$d/index.html")) @file_put_contents("$d/index.html", '');
 }

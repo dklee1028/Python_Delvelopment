@@ -11,7 +11,7 @@ Python·composer 가 필요 없고, FTP 로 올린 뒤 설치 화면에서 DB �
 
 ## 2. 올리기
 1. 이 `mrs` 폴더 전체를 FTP 로 `www/mrs/` 에 올립니다.
-2. `mrs` 폴더에 쓰기 권한(705 또는 755)이 있는지 확인합니다. 설치 시 `config.php` 와 `data/` 폴더를 만듭니다.
+2. 폴더 권한은 755, 파일 권한은 644 로 둡니다. 707·777 처럼 다른 사용자에게 쓰기를 열면 호스팅에 따라 "Internal Server Error"가 날 수 있습니다. 설치 시 `config.php` 와 `data/` 폴더를 자동으로 만듭니다.
 
 ## 3. 설치
 1. 브라우저에서 `https://www.datanex.io.kr/mrs/install.php` 를 엽니다.
