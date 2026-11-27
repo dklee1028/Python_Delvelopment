@@ -1,0 +1,46 @@
+fas2240a> version
+NetApp Release 8.1.3 7-Mode: Tue Feb 19 14:12:23 PST 2013
+fas2240a> sysconfig -a
+        NetApp Release 8.1.3 7-Mode: Tue Feb 19 14:12:23 PST 2013
+        System ID: 1574573402 (fas2240a); partner ID: 1574573450 (fas2240b)
+        System Serial Number: 941426000232 (fas2240a)
+        System Rev: B1
+        Model Name:         FAS2240-2
+fas2240a> df -Ah
+Aggregate                total       used      avail capacity
+aggr0                     12TB       11TB      512GB      96%
+aggr0/.snapshot            0TB        0TB        0TB       0%
+aggr1                     52TB       52TB      204GB     100%
+aggr1/.snapshot            0TB        0TB        0TB       0%
+fas2240a> df -h
+Filesystem               total       used      avail capacity  Mounted on
+/vol/vol0/               480GB      120GB      360GB      25%  /vol/vol0/
+/vol/vol4/              6574GB     6201GB      373GB      94%  /vol/vol4/
+/vol/vol1/              4212GB     3587GB      625GB      85%  /vol/vol1/
+/vol/vol6/              4864GB     2795GB     2069GB      57%  /vol/vol6/
+/vol/vol5/              4864GB     1636GB     3228GB      34%  /vol/vol5/
+/vol/vol2/              3686GB     1108GB     2578GB      30%  /vol/vol2/
+fas2240a> df -i
+Filesystem               iused      ifree  %iused  Mounted on
+/vol/vol4/            3121000   28000000     10%  /vol/vol4/
+/vol/vol2/            2500000   18000000     12%  /vol/vol2/
+fas2240a> vol status -s
+Spare disks
+RAID Disk       Device          HA  SHELF BAY CHAN Pool Type  RPM  Used (MB/blks)
+---------       ------          ------------- ---- ---- ---- ----- --------------
+spare           0b.00.23        0b    0   23  SA:A   -  SAS  10000 560000/1146880000
+fas2240a> vol status -f
+Broken disks
+RAID Disk       Device          HA  SHELF BAY CHAN Pool Type  RPM  Used (MB/blks)
+---------       ------          ------------- ---- ---- ---- ----- --------------
+failed          0b.00.11        0b    0   11  SA:A   -  SAS  10000 560000/1146880000
+fas2240a> cf status
+Cluster enabled, fas2240b is up.
+fas2240a> options autosupport.enable
+autosupport.enable           on
+fas2240a> rdfile /etc/messages
+Mon Jan 26 09:12:01 KST [fas2240a:raid.disk.maint.start:notice]: Disk 0b.00.11 will be tested.
+Mon Jan 26 09:12:44 KST [fas2240a:raid.config.filesystem.disk.failed:error]: File system Disk 0b.00.11 Shelf 0 Bay 11 failed.
+Mon Jan 26 10:02:13 KST [fas2240a:wafl.vol.full:error]: file system on volume aggr1 is full
+Mon Jan 26 11:02:13 KST [fas2240a:wafl.vol.full:error]: file system on volume aggr1 is full
+Mon Jan 26 12:00:00 KST [fas2240a:net.ifgrp.lnk.down:error]: Link down on e0b

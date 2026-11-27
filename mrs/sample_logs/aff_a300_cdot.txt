@@ -1,0 +1,66 @@
+cluster1::> version
+NetApp Release 9.7P2: Thu Mar 05 22:01:12 UTC 2020
+
+cluster1::> system node show
+Node      Health Eligibility Uptime        Model       Owner    Location
+--------- ------ ----------- ------------- ----------- -------- ---------------
+cluster1-01 true true        210 days 02:01 AFF-A300
+cluster1-02 true true        210 days 02:00 AFF-A300
+2 entries were displayed.
+
+cluster1::> system node show -fields serialnumber
+node        serialnumber
+Serial Number: 810000555111
+Serial Number: 810000555222
+
+cluster1::> storage aggregate show
+Aggregate     Size Available Used% State   #Vols  Nodes            RAID Status
+--------- -------- --------- ----- ------- ------ ---------------- ------------
+aggr0_01     1.67TB   83.49GB   95% online       1 cluster1-01      raid_dp,
+                                                                   normal
+aggr1_flash  36.5TB   16.4TB    55% online       5 cluster1-01      raid_dp,
+                                                                   normal
+aggr2_flash  36.5TB   21.2TB    42% online       4 cluster1-02      raid_dp,
+                                                                   normal
+
+cluster1::> volume show
+Vserver   Volume       Aggregate    State      Type       Size  Available Used%
+--------- ------------ ------------ ---------- ---- ---------- ---------- -----
+svm_db    vol_db_p     aggr1_flash  online     RW         5TB     2TB      60%
+svm_db    vol_oltp     aggr1_flash  online     RW         3TB     1.5TB    50%
+svm_nas   vol_dw       aggr1_flash  online     RW         5TB     3TB      40%
+svm_nas   vol_log      aggr2_flash  online     RW         2TB     1.3TB    35%
+svm_nas   vol_test     aggr2_flash  online     RW         1TB     921.6GB  10%
+
+cluster1::> storage failover show
+                              Takeover
+Node           Partner        Possible State Description
+-------------- -------------- -------- -------------------------------------
+cluster1-01    cluster1-02    true     Connected to cluster1-02
+cluster1-02    cluster1-01    true     Connected to cluster1-01
+
+cluster1::> network port show
+                                                  Speed(Mbps) Health
+Node   Port      IPspace      Broadcast Domain Link MTU  Admin/Oper Status
+------ --------- ------------ ---------------- ---- ---- ----------- --------
+cluster1-01
+       e0a       Cluster      Cluster          up   9000  auto/10000 healthy
+       e0c       Default      Default          up   1500  auto/10000 healthy
+       e0d       Default      Default          down 1500  auto/-     -
+
+cluster1::> storage disk show -container-type spare
+                     Usable           Disk    Container   Container
+Disk                   Size Shelf Bay Type    Type        Name      Owner
+---------------- ---------- ----- --- ------- ----------- --------- --------
+1.0.22               3.49TB     0  22 SSD     spare       Pool0     cluster1-01
+1.0.23               3.49TB     0  23 SSD     spare       Pool0     cluster1-02
+
+cluster1::> system autosupport show
+Node                  State     From          To                Mail Hosts
+cluster1-01           enable    asup@x.com    -                 mail
+State: enable
+
+cluster1::> event log show -severity ERROR
+Time                Node             Severity      Event
+------------------- ---------------- ------------- ---------------------------
+1/26/2026 03:12:01  cluster1-01      ERROR         monitor.globalStatus.nonCritical: Fans or power supplies are degraded.
