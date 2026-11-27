@@ -30,7 +30,20 @@ const VARIANT_LABEL = ['single' => '1대용', 'multi' => '2~3대용', 'fleet' =>
 const STATUS_KO = ['draft' => '작성 중', 'review' => '검토 중', 'completed' => '완료', 'sent' => '발송 완료'];
 const STATUS_LABEL = ['normal' => '정상', 'warning' => '요주의', 'critical' => '위험', 'info' => '참고'];
 
-function st_row($phase, $act, $detail, $min, $impact) { return ['phase' => $phase, 'activity' => $act, 'detail' => $detail, 'minutes' => $min, 'impact' => $impact]; }
+function st_row($phase, $act, $detail, $min, $impact) { return ['phase' => phase_name($phase), 'activity' => $act, 'detail' => $detail, 'minutes' => $min, 'impact' => $impact]; }
+/* 작업 단계 번호: 단계 이름 앞의 숫자는 지우고, 지금 순서대로 1, 2, 3… 을 다시 매깁니다.
+   같은 단계가 이어지면 1-1, 1-2 처럼 하위 번호를 붙입니다. (순서를 위아래로 옮기면 번호도 바뀝니다) */
+function phase_name($p) { return trim(preg_replace('/^\s*\d+(\s*[.\-)]\s*\d+)*\s*[.)]?\s*/u', '', (string)$p)); }
+function number_steps($steps) {
+    $out = []; $pi = 0; $si = 0; $last = null;
+    foreach (array_values((array)$steps) as $st) {
+        $name = phase_name($st['phase'] ?? '');
+        if ($last === null || $name !== $last) { $pi++; $si = 0; $last = $name; }
+        $si++;
+        $st['phase_name'] = $name; $st['phase'] = $name === '' ? "$pi" : "$pi. $name"; $st['no'] = "$pi-$si"; $out[] = $st;
+    }
+    return $out;
+}
 function default_steps() {
     $pre = [st_row('1. 사전 작업', '사전 회의', '작업 진행 프로세스 브리핑 및 고객 승인 확인', 30, '없음'),
         st_row('1. 사전 작업', '장비 상태 점검', 'H/W 외관(Disk, PSU, Fan, LED) 및 시스템 Health 확인, AutoSupport 수집', 30, '없음')];

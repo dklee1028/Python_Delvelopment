@@ -5,7 +5,7 @@
 date_default_timezone_set('Asia/Seoul');
 mb_internal_encoding('UTF-8');
 const MRS_VERSION = '1.0.0';
-const SCHEMA_V = '1';
+const SCHEMA_V = '2';
 
 function cfg() {
     static $c = false;
@@ -87,9 +87,12 @@ function schema_sql($driver) {
         email VARCHAR(200), phone VARCHAR(50), receive_reports INT NOT NULL DEFAULT 1, is_primary INT NOT NULL DEFAULT 0, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_equipment (id $pk, customer_id INT NOT NULL, name VARCHAR(100) NOT NULL, vendor VARCHAR(50), model VARCHAR(100), serial VARCHAR(200),
         os_version VARCHAR(100), ha_type VARCHAR(50), disk_info VARCHAR(200), location VARCHAR(200), contract_type VARCHAR(100), memo TEXT, is_active INT NOT NULL DEFAULT 1,
-        created_at VARCHAR(19), updated_at VARCHAR(19))$end";
+        disposed_at VARCHAR(19), dispose_note VARCHAR(500), created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_log_file (id $pk, customer_id INT NOT NULL, equipment_id INT, collected_at VARCHAR(19), original_name VARCHAR(300),
-        stored_path VARCHAR(600), size_bytes INT NOT NULL DEFAULT 0, sha256 VARCHAR(64), parsed $T, note VARCHAR(500), uploaded_by INT, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
+        stored_path VARCHAR(600), size_bytes INT NOT NULL DEFAULT 0, sha256 VARCHAR(64), parsed $T, note VARCHAR(500), uploaded_by INT,
+        status VARCHAR(20), n_crit INT, n_warn INT, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
+    // 고객 담당 배정: kind = main(정) / sub(부). 자료는 고객에 붙어 있으므로 배정을 옮겨도 그대로 유지됩니다.
+    $t[] = "CREATE TABLE IF NOT EXISTS mrs_customer_assign (id $pk, customer_id INT NOT NULL, user_id INT NOT NULL, kind VARCHAR(10) NOT NULL DEFAULT 'sub', created_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_report_template (id $pk, name VARCHAR(200) NOT NULL, report_type VARCHAR(30), customer_id INT, file_format VARCHAR(10),
         stored_path VARCHAR(600), original_name VARCHAR(300), description TEXT, placeholders TEXT, is_active INT NOT NULL DEFAULT 1, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_report (id $pk, report_no VARCHAR(40) NOT NULL UNIQUE, customer_id INT NOT NULL, report_type VARCHAR(30), work_subtype VARCHAR(30),
@@ -110,12 +113,19 @@ function schema_sql($driver) {
         'ix_mrs_eq_c ON mrs_equipment (customer_id)', 'ix_mrs_log_c ON mrs_log_file (customer_id)', 'ix_mrs_log_e ON mrs_log_file (equipment_id)',
         'ix_mrs_log_at ON mrs_log_file (collected_at)', 'ix_mrs_rep_c ON mrs_report (customer_id)', 'ix_mrs_rep_st ON mrs_report (status)',
         'ux_mrs_rep_eq ON mrs_report_equipment (report_id, equipment_id)', 'ux_mrs_rep_log ON mrs_report_log (report_id, log_id)',
-        'ix_mrs_rfile_r ON mrs_report_file (report_id)', 'ix_mrs_mail_r ON mrs_mail_log (report_id)', 'ix_mrs_audit_at ON mrs_audit_log (at)',
+        'ix_mrs_rfile_r ON mrs_report_file (report_id)', 'ux_mrs_assign ON mrs_customer_assign (customer_id, user_id)', 'ix_mrs_assign_u ON mrs_customer_assign (user_id)', 'ix_mrs_mail_r ON mrs_mail_log (report_id)', 'ix_mrs_audit_at ON mrs_audit_log (at)',
     ];
     foreach ($ix as $i) $t[] = (strpos($i, 'ux_') === 0 ? 'CREATE UNIQUE INDEX ' : 'CREATE INDEX ') . $i;
     return $t;
 }
 function install_schema($pdo, $driver) {
+    // v1 → v2: 기존 테이블에 열 추가 (데이터는 그대로)
+    $add = ['mrs_equipment' => ['disposed_at' => 'VARCHAR(19)', 'dispose_note' => 'VARCHAR(500)'], 'mrs_log_file' => ['status' => 'VARCHAR(20)', 'n_crit' => 'INT', 'n_warn' => 'INT']];
+    foreach ($add as $tb => $cols) {
+        if (!has_table($tb)) continue;
+        $have = table_columns($tb);
+        foreach ($cols as $c => $ty) if (!in_array($c, $have, true)) $pdo->exec("ALTER TABLE $tb ADD COLUMN $c $ty");
+    }
     foreach (schema_sql($driver) as $sql) {
         try { $pdo->exec($sql); } catch (PDOException $e) {
             // 이미 있는 인덱스는 건너뜀 (MariaDB 는 CREATE INDEX IF NOT EXISTS 를 10.1.4+ 에서만 지원)
@@ -160,6 +170,10 @@ function decrypt_secret($v) {
 const SETTING_FIELDS = [
     'company_name' => ['회사명', 'text', false, 'DATANEX'],
     'company_address' => ['회사 주소', 'text', false, '서울시 구로구 디지털로34길 55 코오롱싸이언스밸리2차 1205호'],
+    'mail_method' => ['발송 방식', 'select', false, 'smtp'],
+    'm365_tenant' => ['디렉터리(테넌트) ID', 'text', false, ''],
+    'm365_client_id' => ['애플리케이션(클라이언트) ID', 'text', false, ''],
+    'm365_client_secret' => ['클라이언트 암호 (값)', 'password', true, ''],
     'smtp_host' => ['SMTP 서버', 'text', false, ''],
     'smtp_port' => ['SMTP 포트', 'number', false, '587'],
     'smtp_security' => ['보안 연결', 'select', false, 'starttls'],
@@ -170,6 +184,10 @@ const SETTING_FIELDS = [
     'anthropic_key' => ['Anthropic API 키', 'password', true, ''],
     'ai_model' => ['Claude 모델', 'text', false, 'claude-opus-5-5'],
     'legacy_table' => ['기존 고객 테이블', 'text', false, 'pms_customers'],
+];
+const SETTING_OPTIONS = [
+    'mail_method' => ['smtp' => '일반 SMTP (아이디·비밀번호)', 'm365' => 'Microsoft 365 (OAuth · Graph API)'],
+    'smtp_security' => ['starttls' => 'STARTTLS (보통 587)', 'ssl' => 'SSL/TLS (보통 465)', 'none' => '사용 안 함 (보통 25)'],
 ];
 function conf($k) { $f = SETTING_FIELDS[$k]; return get_setting($k, $f[3]); }
 

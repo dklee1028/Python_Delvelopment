@@ -80,7 +80,8 @@ function route($m, $pat, $fn) { global $R; $R[] = [$m, '#^' . $pat . '$#', $fn];
 function user_out($u) {
     return ['id' => (int)$u['id'], 'username' => $u['username'], 'full_name' => $u['full_name'] ?: '', 'email' => $u['email'] ?: '', 'phone' => $u['phone'] ?: '', 'title' => $u['title'] ?: '',
         'role' => $u['role'], 'role_label' => ROLE_LABELS[$u['role']] ?? $u['role'], 'permissions' => effective_perms($u), 'overrides' => (object)jd($u['permissions'], []),
-        'is_active' => (bool)(int)$u['is_active'], 'must_change_pw' => (bool)(int)$u['must_change_pw'], 'last_login_at' => $u['last_login_at']];
+        'is_active' => (bool)(int)$u['is_active'], 'must_change_pw' => (bool)(int)$u['must_change_pw'], 'last_login_at' => $u['last_login_at'],
+        'assigned' => ['main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$u['id']]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='sub'", [$u['id']])]];
 }
 route('POST', 'auth/login', function () use ($in) {
     $u = one("SELECT * FROM mrs_user WHERE username=?", [s($in['username'] ?? '', 64)]);
@@ -141,9 +142,24 @@ route('DELETE', 'users/(\d+)', function ($id) {
     if ($u['role'] === 'admin' && !val("SELECT COUNT(*) FROM mrs_user WHERE role='admin' AND is_active=1 AND id<>?", [$id])) fail('마지막 관리자는 삭제할 수 없습니다.');
     // 보고서에 남은 담당 엔지니어 기록은 비우고 계정만 삭제
     q("UPDATE mrs_report SET engineer_id=NULL WHERE engineer_id=?", [$id]);
+    q("DELETE FROM mrs_customer_assign WHERE user_id=?", [$id]);
     q("DELETE FROM mrs_user WHERE id=?", [$id]);
     audit('user.delete', $u['username']);
     out(['ok' => true]);
+});
+/* 담당 고객 이관: 한 사용자의 정/부 배정을 다른 사용자에게 옮깁니다. 보고서·로그·장비는 고객에 붙어 있어 그대로 유지됩니다. */
+route('POST', 'users/(\d+)/transfer', function ($id) use ($in) {
+    need('user.manage'); $from = one("SELECT * FROM mrs_user WHERE id=?", [$id]); $to = one("SELECT * FROM mrs_user WHERE id=? AND is_active=1", [(int)($in['to_user_id'] ?? 0)]);
+    if (!$from || !$to) fail('사용자를 찾을 수 없습니다.', 404);
+    if ((int)$from['id'] === (int)$to['id']) fail('같은 사용자입니다.');
+    $only = array_map('intval', (array)($in['customer_ids'] ?? [])); $n = 0;
+    foreach (all("SELECT * FROM mrs_customer_assign WHERE user_id=?", [$from['id']]) as $a) {
+        if ($only && !in_array((int)$a['customer_id'], $only, true)) continue;
+        assign_set((int)$a['customer_id'], (int)$to['id'], $a['kind']); q("DELETE FROM mrs_customer_assign WHERE id=?", [$a['id']]); $n++;
+    }
+    if (b($in['reports'] ?? false)) q("UPDATE mrs_report SET engineer_id=? WHERE engineer_id=? AND status<>'completed'", [$to['id'], $from['id']]);
+    audit('assign.transfer', $from['username'] . ' → ' . $to['username'], "{$n}개 고객");
+    out(['moved' => $n]);
 });
 route('GET', 'audit', function () {
     need('user.manage');
@@ -168,15 +184,16 @@ route('GET', 'legacy/customers', function () {
     [$sql, $ext, $where, $q] = legacy_select($t); $p = []; $sql .= " WHERE $where"; $kw = trim((string)g('q'));
     if ($kw !== '') { $sql .= " AND ({$q('name')} LIKE ? OR " . (in_array('code', $ext, true) ? "{$q('code')} LIKE ? OR " : '') . (in_array('address', table_columns($t), true) ? "{$q('address')} LIKE ?" : '1=0') . ")";
         $p = array_fill(0, 1 + (in_array('code', $ext, true) ? 1 : 0) + (in_array('address', table_columns($t), true) ? 1 : 0), "%$kw%"); }
-    $rows = array_map(function ($r) use ($ext) { return legacy_row($r, $ext); }, all($sql . " ORDER BY {$q('name')} LIMIT 50", $p));
+    $rows = array_map(function ($r) use ($ext) { return legacy_row($r, $ext); }, all($sql . " ORDER BY {$q('name')}", $p));
     $linked = []; foreach (all("SELECT id, legacy_customer_id FROM mrs_customer WHERE legacy_customer_id IS NOT NULL") as $c) $linked[$c['legacy_customer_id']] = (int)$c['id'];
-    foreach ($rows as &$r) $r['mrs_customer_id'] = $linked[$r['id']] ?? null;
-    out(['enabled' => true, 'table' => $t, 'items' => $rows]);
+    $mains = assign_names('main');
+    foreach ($rows as &$r) { $r['mrs_customer_id'] = $linked[$r['id']] ?? null; $r['main_name'] = $r['mrs_customer_id'] ? ($mains[$r['mrs_customer_id']] ?? '') : ''; }
+    out(['enabled' => true, 'table' => $t, 'total' => count($rows), 'items' => $rows]);
 });
 route('POST', 'legacy/customers/([^/]+)/link', function ($lid) {
     need('customer.edit'); $src = legacy_get($lid); if (!$src) fail('기존 고객 DB에서 찾을 수 없습니다.', 404);
-    $ex = one("SELECT id FROM mrs_customer WHERE legacy_customer_id=?", [$lid]);
-    if ($ex) { upd('mrs_customer', ['name' => $src['name'], 'address' => $src['address'], 'updated_at' => now()], $ex['id']); out(customer_out($ex['id'])); }
+    $ex = one("SELECT id FROM mrs_customer WHERE legacy_customer_id=?", [$lid]); $kind = assign_kind($GLOBALS['in']['kind'] ?? '');
+    if ($ex) { upd('mrs_customer', ['name' => $src['name'], 'address' => $src['address'], 'updated_at' => now()], $ex['id']); if ($kind) assign_self((int)$ex['id'], $kind); out(customer_out($ex['id'])); }
     $cid = ins('mrs_customer', ['legacy_customer_id' => $lid, 'name' => $src['name'], 'address' => $src['address'], 'site' => '', 'memo' => '', 'created_at' => now(), 'updated_at' => now()]);
     // PMS 고객에 등록된 담당자1·2를 전산담당자 초기값으로 가져옵니다(이후 MRS 에서 따로 관리).
     $k = 0;
@@ -186,6 +203,7 @@ route('POST', 'legacy/customers/([^/]+)/link', function ($lid) {
         ins('mrs_customer_contact', ['customer_id' => $cid, 'name' => $nm, 'phone' => $src[$c . '_phone'] ?? '', 'email' => $em, 'department' => '', 'position' => '',
             'receive_reports' => $em ? 1 : 0, 'is_primary' => $k++ === 0 ? 1 : 0, 'created_at' => now(), 'updated_at' => now()]);
     }
+    if ($kind) assign_self((int)$cid, $kind);
     audit('customer.link', $src['name']);
     out(customer_out($cid));
 });
@@ -203,23 +221,97 @@ route('POST', 'legacy/sync', function () {
 function contact_out($c) { return ['id' => (int)$c['id'], 'name' => $c['name'], 'department' => $c['department'] ?: '', 'position' => $c['position'] ?: '', 'email' => $c['email'] ?: '', 'phone' => $c['phone'] ?: '', 'receive_reports' => (bool)(int)$c['receive_reports'], 'is_primary' => (bool)(int)$c['is_primary']]; }
 function eq_out($e) {
     $d = []; foreach (['id', 'customer_id', 'name', 'vendor', 'model', 'serial', 'os_version', 'ha_type', 'disk_info', 'location', 'contract_type', 'memo'] as $k) $d[$k] = in_array($k, ['id', 'customer_id'], true) ? (int)$e[$k] : ($e[$k] ?? '');
-    $d['is_active'] = (bool)(int)$e['is_active']; return $d;
+    $d['is_active'] = (bool)(int)$e['is_active']; $d['disposed'] = !empty($e['disposed_at']); $d['disposed_at'] = $e['disposed_at'] ? substr($e['disposed_at'], 0, 10) : null; $d['dispose_note'] = $e['dispose_note'] ?? '';
+    $st = one("SELECT status, n_crit, n_warn, collected_at FROM mrs_log_file WHERE equipment_id=? ORDER BY collected_at DESC, id DESC LIMIT 1", [$e['id']]);
+    $d['last_log'] = $st ? ['at' => substr($st['collected_at'], 0, 10), 'status' => $st['status'] ?: 'normal', 'crit' => (int)$st['n_crit'], 'warn' => (int)$st['n_warn']] : null;
+    return $d;
+}
+/* ----- 담당 배정 (정/부) ----- */
+function assign_kind($k) { return in_array($k, ['main', 'sub'], true) ? $k : ''; }
+function assign_set($cid, $uid, $kind) {
+    if ($kind === 'main') q("UPDATE mrs_customer_assign SET kind='sub' WHERE customer_id=? AND kind='main' AND user_id<>?", [$cid, $uid]); // 정은 고객당 1명, 기존 정은 부로
+    $ex = one("SELECT id FROM mrs_customer_assign WHERE customer_id=? AND user_id=?", [$cid, $uid]);
+    if ($ex) upd('mrs_customer_assign', ['kind' => $kind], $ex['id']);
+    else ins('mrs_customer_assign', ['customer_id' => $cid, 'user_id' => $uid, 'kind' => $kind, 'created_at' => now()]);
+}
+// 다른 사람의 정 담당을 바꾸거나 남을 배정할 수 있는 사람: 관리자·팀장(또는 사용자 관리 권한)
+function can_reassign($u) { return in_array('user.manage', $u['perms'], true) || in_array($u['role'], ['admin', 'manager'], true); }
+function assign_self($cid, $kind) {
+    $u = me(); $cur = val("SELECT user_id FROM mrs_customer_assign WHERE customer_id=? AND kind='main'", [$cid]);
+    if ($kind === 'main' && $cur && (int)$cur !== (int)$u['id'] && !can_reassign($u)) $kind = 'sub'; // 이미 정 담당이 있으면 부로
+    assign_set($cid, (int)$u['id'], $kind);
+}
+function assign_names($kind) { $m = []; foreach (all("SELECT a.customer_id, u.full_name, u.username FROM mrs_customer_assign a JOIN mrs_user u ON u.id=a.user_id WHERE a.kind=? ORDER BY a.id", [$kind]) as $r) $m[$r['customer_id']] = ($m[$r['customer_id']] ?? '') ? $m[$r['customer_id']] . ', ' . ($r['full_name'] ?: $r['username']) : ($r['full_name'] ?: $r['username']); return $m; }
+function cust_assign($cid) {
+    $rows = all("SELECT a.user_id, a.kind, u.full_name, u.username FROM mrs_customer_assign a JOIN mrs_user u ON u.id=a.user_id WHERE a.customer_id=? ORDER BY a.kind, a.id", [$cid]);
+    $main = null; $subs = [];
+    foreach ($rows as $r) { $x = ['id' => (int)$r['user_id'], 'name' => $r['full_name'] ?: $r['username']]; if ($r['kind'] === 'main') $main = $x; else $subs[] = $x; }
+    return [$main, $subs];
+}
+/* 로그 상태 요약을 저장해 두고 고객 현황표에서 빠르게 씁니다. */
+function log_stat_fill($where = '1=1', $p = []) {
+    foreach (all("SELECT id, parsed FROM mrs_log_file WHERE status IS NULL AND $where LIMIT 300", $p) as $l) {
+        $pa = jd($l['parsed'], []); $a = $pa ? analyze([], $pa) : ['status' => 'normal', 'findings' => []]; $c = ['critical' => 0, 'warning' => 0];
+        foreach ($a['findings'] as $f) if (isset($c[$f['severity']])) $c[$f['severity']]++;
+        upd('mrs_log_file', ['status' => $a['status'], 'n_crit' => $c['critical'], 'n_warn' => $c['warning']], $l['id']);
+    }
 }
 function customer_out($cid, $detail = false) {
     $c = one("SELECT * FROM mrs_customer WHERE id=?", [$cid]); if (!$c) fail('고객을 찾을 수 없습니다.', 404);
+    [$main, $subs] = cust_assign($cid); $uid = (int)(me()['id'] ?? 0);
     $d = ['id' => (int)$c['id'], 'legacy_customer_id' => $c['legacy_customer_id'], 'name' => $c['name'], 'address' => $c['address'] ?: '', 'site' => $c['site'] ?: '', 'memo' => $c['memo'] ?: '',
-        'linked' => (bool)$c['legacy_customer_id'], 'equipment_count' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE customer_id=?", [$cid]),
+        'main' => $main, 'subs' => $subs, 'my_role' => $main && $main['id'] === $uid ? 'main' : (in_array($uid, array_column($subs, 'id'), true) ? 'sub' : null),
+        'disposed_count' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE customer_id=? AND disposed_at IS NOT NULL", [$cid]),
+        'linked' => (bool)$c['legacy_customer_id'], 'equipment_count' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE customer_id=? AND disposed_at IS NULL", [$cid]),
         'contact_count' => (int)val("SELECT COUNT(*) FROM mrs_customer_contact WHERE customer_id=?", [$cid]), 'report_count' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE customer_id=?", [$cid])];
     if ($detail) {
         $d['contacts'] = array_map('contact_out', all("SELECT * FROM mrs_customer_contact WHERE customer_id=? ORDER BY id", [$cid]));
-        $d['equipment'] = array_map('eq_out', all("SELECT * FROM mrs_equipment WHERE customer_id=? ORDER BY id", [$cid]));
+        log_stat_fill('customer_id=?', [$cid]);
+        $d['equipment'] = array_map('eq_out', all("SELECT * FROM mrs_equipment WHERE customer_id=?" . (g('disposed') ? '' : ' AND disposed_at IS NULL') . " ORDER BY disposed_at IS NOT NULL, id", [$cid]));
     }
     return $d;
 }
+/* 고객 현황표: scope=mine(내 정·부 고객, 기본) / all(전체).  한 줄에 담당자·장비 수·현재 문제·최근 로그/보고서를 보여 줍니다. */
 route('GET', 'customers', function () {
-    need('customer.view'); $kw = trim((string)g('q')); $p = []; $sql = "SELECT id FROM mrs_customer";
-    if ($kw !== '') { $sql .= " WHERE name LIKE ? OR address LIKE ?"; $p = ["%$kw%", "%$kw%"]; }
-    out(array_map(function ($r) { return customer_out($r['id']); }, all("$sql ORDER BY name", $p)));
+    $u = need('customer.view'); $uid = (int)$u['id']; $kw = trim((string)g('q')); $scope = g('scope', 'mine'); $p = []; $w = [];
+    if ($kw !== '') { $w[] = "(c.name LIKE ? OR c.address LIKE ? OR c.site LIKE ?)"; array_push($p, "%$kw%", "%$kw%", "%$kw%"); }
+    if ($scope === 'mine') { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=?)"; $p[] = $uid; }
+    elseif ($scope === 'unassigned') $w[] = "c.id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE kind='main')";
+    elseif (preg_match('/^user:(\d+)$/', $scope, $m)) { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=?)"; $p[] = (int)$m[1]; }
+    $rows = all("SELECT c.* FROM mrs_customer c" . ($w ? ' WHERE ' . implode(' AND ', $w) : '') . " ORDER BY c.name", $p);
+    log_stat_fill();
+    $as = []; foreach (all("SELECT a.customer_id, a.user_id, a.kind, u.full_name, u.username FROM mrs_customer_assign a JOIN mrs_user u ON u.id=a.user_id ORDER BY a.id") as $a) $as[$a['customer_id']][] = $a;
+    $eq = []; foreach (all("SELECT customer_id, SUM(CASE WHEN disposed_at IS NULL THEN 1 ELSE 0 END) act, SUM(CASE WHEN disposed_at IS NULL THEN 0 ELSE 1 END) disp FROM mrs_equipment GROUP BY customer_id") as $e) $eq[$e['customer_id']] = $e;
+    $st = []; // 사용 중 장비별 최신 로그 기준 현재 상태
+    foreach (all("SELECT l.customer_id, l.status, l.n_crit, l.n_warn, l.collected_at FROM mrs_log_file l JOIN mrs_equipment e ON e.id=l.equipment_id AND e.disposed_at IS NULL
+        JOIN (SELECT equipment_id, MAX(collected_at) m FROM mrs_log_file WHERE equipment_id IS NOT NULL GROUP BY equipment_id) x ON x.equipment_id=l.equipment_id AND x.m=l.collected_at") as $l) {
+        $s = &$st[$l['customer_id']]; $s = $s ?? ['crit' => 0, 'warn' => 0, 'worst' => 'normal', 'last' => '', 'checked' => 0];
+        $s['crit'] += (int)$l['n_crit']; $s['warn'] += (int)$l['n_warn']; $s['checked']++; if ($l['collected_at'] > $s['last']) $s['last'] = $l['collected_at'];
+        if (($l['status'] === 'critical') || ($l['status'] === 'warning' && $s['worst'] === 'normal')) $s['worst'] = $l['status']; unset($s);
+    }
+    $rp = []; foreach (all("SELECT r.customer_id, r.report_no, r.inspection_date, r.status, r.report_type FROM mrs_report r JOIN (SELECT customer_id, MAX(id) m FROM mrs_report GROUP BY customer_id) x ON x.m=r.id") as $r) $rp[$r['customer_id']] = $r;
+    $rc = []; foreach (all("SELECT customer_id, COUNT(*) n FROM mrs_report GROUP BY customer_id") as $r) $rc[$r['customer_id']] = (int)$r['n'];
+    $cc = []; foreach (all("SELECT customer_id, COUNT(*) n FROM mrs_customer_contact GROUP BY customer_id") as $r) $cc[$r['customer_id']] = (int)$r['n'];
+    out(array_map(function ($c) use ($as, $eq, $st, $rp, $rc, $cc, $uid) {
+        $main = null; $subs = []; $my = null;
+        foreach ($as[$c['id']] ?? [] as $a) { $x = ['id' => (int)$a['user_id'], 'name' => $a['full_name'] ?: $a['username']]; if ($a['kind'] === 'main') $main = $x; else $subs[] = $x; if ((int)$a['user_id'] === $uid) $my = $a['kind']; }
+        $s = $st[$c['id']] ?? null; $r = $rp[$c['id']] ?? null;
+        return ['id' => (int)$c['id'], 'name' => $c['name'], 'address' => $c['address'] ?: '', 'site' => $c['site'] ?: '', 'linked' => (bool)$c['legacy_customer_id'], 'legacy_customer_id' => $c['legacy_customer_id'],
+            'main' => $main, 'subs' => $subs, 'my_role' => $my,
+            'equipment_count' => (int)($eq[$c['id']]['act'] ?? 0), 'disposed_count' => (int)($eq[$c['id']]['disp'] ?? 0), 'contact_count' => $cc[$c['id']] ?? 0, 'report_count' => $rc[$c['id']] ?? 0,
+            'health' => $s ? ['status' => $s['worst'], 'crit' => $s['crit'], 'warn' => $s['warn'], 'checked' => $s['checked'], 'last_log' => substr($s['last'], 0, 10)] : null,
+            'last_report' => $r ? ['no' => $r['report_no'], 'date' => $r['inspection_date'], 'status' => $r['status'], 'type' => REPORT_TYPES[$r['report_type']] ?? $r['report_type']] : null];
+    }, $rows));
+});
+route('POST', 'customers/(\d+)/assign', function ($cid) use ($in) {
+    $u = need('customer.view'); customer_out($cid); $kind = $in['kind'] ?? ''; $target = (int)($in['user_id'] ?? 0) ?: (int)$u['id'];
+    if ($target !== (int)$u['id']) { if (!can_reassign($u)) fail('다른 담당자 배정은 관리자·팀장만 바꿀 수 있습니다.', 403); if (!one("SELECT id FROM mrs_user WHERE id=? AND is_active=1", [$target])) fail('사용자를 찾을 수 없습니다.', 404); }
+    if ($kind === 'none') q("DELETE FROM mrs_customer_assign WHERE customer_id=? AND user_id=?", [$cid, $target]);
+    elseif (!assign_kind($kind)) fail('담당 구분은 정 또는 부입니다.');
+    elseif ($target === (int)$u['id']) assign_self((int)$cid, $kind);
+    else assign_set((int)$cid, $target, $kind);
+    audit('assign.' . $kind, (string)val("SELECT name FROM mrs_customer WHERE id=?", [$cid]), (string)val("SELECT username FROM mrs_user WHERE id=?", [$target]));
+    out(customer_out($cid));
 });
 route('GET', 'customers/(\d+)', function ($id) { need('customer.view'); out(customer_out($id, true)); });
 function cust_data($in) { $d = ['name' => s($in['name'] ?? '', 200), 'address' => s($in['address'] ?? '', 500), 'site' => s($in['site'] ?? '', 200), 'memo' => s($in['memo'] ?? '', 5000)]; if ($d['name'] === '') fail('고객명을 입력하세요.'); return $d; }
@@ -235,6 +327,7 @@ route('DELETE', 'customers/(\d+)', function ($id) {
     if ($c['report_count']) fail('보고서가 있는 고객은 삭제할 수 없습니다. 보고서를 먼저 삭제하세요.');
     foreach (all("SELECT stored_path FROM mrs_log_file WHERE customer_id=?", [$id]) as $l) @unlink(data_dir() . '/' . $l['stored_path']);
     q("DELETE FROM mrs_log_file WHERE customer_id=?", [$id]); q("DELETE FROM mrs_equipment WHERE customer_id=?", [$id]); q("DELETE FROM mrs_customer_contact WHERE customer_id=?", [$id]);
+    q("DELETE FROM mrs_customer_assign WHERE customer_id=?", [$id]);
     q("DELETE FROM mrs_customer WHERE id=?", [$id]); audit('customer.delete', $c['name']); out(['ok' => true]);
 });
 function contact_data($in) {
@@ -265,10 +358,19 @@ function eq_data($in) {
 }
 route('POST', 'customers/(\d+)/equipment', function ($cid) use ($in) { need('equipment.edit'); customer_out($cid); $d = eq_data($in); $id = ins('mrs_equipment', $d + ['customer_id' => (int)$cid, 'created_at' => now(), 'updated_at' => now()]); audit('equipment.create', $d['name']); out(eq_out(one("SELECT * FROM mrs_equipment WHERE id=?", [$id]))); });
 route('PUT', 'equipment/(\d+)', function ($id) use ($in) { need('equipment.edit'); if (!one("SELECT id FROM mrs_equipment WHERE id=?", [$id])) fail('장비를 찾을 수 없습니다.', 404); $d = eq_data($in); upd('mrs_equipment', $d + ['updated_at' => now()], $id); audit('equipment.update', $d['name']); out(eq_out(one("SELECT * FROM mrs_equipment WHERE id=?", [$id]))); });
+route('POST', 'equipment/(\d+)/dispose', function ($id) use ($in) {
+    need('equipment.edit'); $e = one("SELECT * FROM mrs_equipment WHERE id=?", [$id]); if (!$e) fail('장비를 찾을 수 없습니다.', 404);
+    upd('mrs_equipment', ['is_active' => 0, 'disposed_at' => now(), 'dispose_note' => s($in['note'] ?? '', 500), 'updated_at' => now()], $id);
+    audit('equipment.dispose', $e['name'], s($in['note'] ?? '', 500)); out(['ok' => true]);
+});
+route('POST', 'equipment/(\d+)/restore', function ($id) {
+    need('equipment.edit'); $e = one("SELECT * FROM mrs_equipment WHERE id=?", [$id]); if (!$e) fail('장비를 찾을 수 없습니다.', 404);
+    upd('mrs_equipment', ['is_active' => 1, 'disposed_at' => null, 'dispose_note' => '', 'updated_at' => now()], $id); audit('equipment.restore', $e['name']); out(['ok' => true]);
+});
 route('DELETE', 'equipment/(\d+)', function ($id) {
     need('equipment.edit'); $e = one("SELECT * FROM mrs_equipment WHERE id=?", [$id]); if (!$e) fail('장비를 찾을 수 없습니다.', 404);
     if (val("SELECT COUNT(*) FROM mrs_log_file WHERE equipment_id=?", [$id]) || val("SELECT COUNT(*) FROM mrs_report_equipment WHERE equipment_id=?", [$id])) {
-        upd('mrs_equipment', ['is_active' => 0, 'updated_at' => now()], $id); audit('equipment.deactivate', $e['name']); out(['ok' => true, 'deactivated' => true]); // 로그·보고서 이력 보존
+        fail('로그나 보고서 이력이 있는 장비는 삭제하지 않고 "파기"로 처리합니다. 파기하면 현황에서는 빠지고, "파기장비 포함"을 켜면 로그와 함께 다시 볼 수 있습니다.');
     }
     q("DELETE FROM mrs_equipment WHERE id=?", [$id]); audit('equipment.delete', $e['name']); out(['ok' => true]);
 });
@@ -283,7 +385,7 @@ function log_out($lg, $names = []) {
             'failed_disks' => count($p['disks']['failed'] ?? []), 'events' => ['emergency' => $p['events']['emergency'] ?? 0, 'alert' => $p['events']['alert'] ?? 0, 'error' => $p['events']['error'] ?? 0],
             'status' => $a['status'] ?? 'normal', 'score' => $a['score'] ?? null]];
 }
-function eq_names($cid) { $n = []; foreach (all("SELECT id, name FROM mrs_equipment WHERE customer_id=?", [$cid]) as $e) $n[$e['id']] = $e['name']; return $n; }
+function eq_names($cid) { $n = []; foreach (all("SELECT id, name, disposed_at FROM mrs_equipment WHERE customer_id=?", [$cid]) as $e) $n[$e['id']] = $e['name'] . ($e['disposed_at'] ? ' (파기)' : ''); return $n; }
 function upload_list($key) {
     $f = $_FILES[$key] ?? null; if (!$f) return [];
     if (!is_array($f['name'])) return [$f];
@@ -316,6 +418,7 @@ route('POST', 'customers/(\d+)/logs', function ($cid) {
         if (!move_uploaded_file($f['tmp_name'], "$dir/$name") && !rename($f['tmp_name'], "$dir/$name")) fail('파일을 저장할 수 없습니다. data 폴더 쓰기 권한을 확인하세요.', 500);
         $ids[] = ins('mrs_log_file', ['customer_id' => (int)$cid, 'equipment_id' => $target, 'collected_at' => $when, 'original_name' => mb_substr($f['name'], 0, 300), 'stored_path' => "$rel/$name",
             'size_bytes' => strlen($data), 'sha256' => hash('sha256', $data), 'parsed' => je($parsed), 'note' => $note, 'uploaded_by' => me()['id'], 'created_at' => now(), 'updated_at' => now()]);
+        log_stat_fill('id=?', [end($ids)]);
     }
     audit('log.upload', $cust['name'], implode(', ', array_column($files, 'name')));
     $names = eq_names($cid);
@@ -323,6 +426,7 @@ route('POST', 'customers/(\d+)/logs', function ($cid) {
 });
 route('GET', 'customers/(\d+)/logs', function ($cid) {
     need('customer.view'); $sql = "SELECT * FROM mrs_log_file WHERE customer_id=?"; $p = [$cid];
+    if (!g('disposed')) $sql .= " AND (equipment_id IS NULL OR equipment_id NOT IN (SELECT id FROM mrs_equipment WHERE disposed_at IS NOT NULL))";
     if ($e = (int)g('equipment_id', 0)) { $sql .= " AND equipment_id=?"; $p[] = $e; }
     if ($d = g('date_from')) { $sql .= " AND collected_at>=?"; $p[] = substr($d, 0, 10) . ' 00:00:00'; }
     if ($d = g('date_to')) { $sql .= " AND collected_at<=?"; $p[] = substr($d, 0, 10) . ' 23:59:59'; }
@@ -384,7 +488,7 @@ route('GET', 'catalog', function () {
     need('report.view');
     out(['report_types' => REPORT_TYPES, 'work_subtypes' => WORK_SUBTYPES, 'service_codes' => SERVICE_CODES, 'visual_items' => VISUAL_ITEMS, 'visual_choices' => VISUAL_CHOICES,
         'default_steps' => default_steps(), 'default_rollback' => DEFAULT_ROLLBACK, 'status' => STATUS_KO, 'variants' => VARIANT_LABEL,
-        'ai_enabled' => (bool)conf('anthropic_key'), 'mail_enabled' => (bool)conf('smtp_host'),
+        'ai_enabled' => (bool)conf('anthropic_key'), 'mail_enabled' => mail_ready(),
         'engineers' => array_map(function ($u) { return ['id' => (int)$u['id'], 'name' => trim(($u['full_name'] ?: $u['username']) . ' ' . $u['title'])]; }, all("SELECT id, username, full_name, title FROM mrs_user WHERE is_active=1 ORDER BY full_name"))]);
 });
 function report_brief($r) {
@@ -423,7 +527,7 @@ route('GET', 'dashboard', function () {
     need('report.view');
     $bs = []; foreach (all("SELECT status, COUNT(*) n FROM mrs_report GROUP BY status") as $x) $bs[$x['status']] = (int)$x['n'];
     $bt = []; foreach (all("SELECT report_type, COUNT(*) n FROM mrs_report GROUP BY report_type") as $x) $bt[$x['report_type']] = (int)$x['n'];
-    out(['customers' => (int)val("SELECT COUNT(*) FROM mrs_customer"), 'equipment' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE is_active=1"), 'logs' => (int)val("SELECT COUNT(*) FROM mrs_log_file"),
+    out(['customers' => (int)val("SELECT COUNT(*) FROM mrs_customer"), 'equipment' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE is_active=1 AND disposed_at IS NULL"), 'logs' => (int)val("SELECT COUNT(*) FROM mrs_log_file"),
         'reports' => array_sum($bs), 'this_month' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE inspection_date LIKE ?", [date('Y-m') . '%']), 'by_status' => (object)$bs, 'by_type' => (object)$bt,
         'recent' => array_map('report_brief', all("SELECT * FROM mrs_report ORDER BY updated_at DESC, id DESC LIMIT 8")),
         'attention' => array_map('report_brief', all("SELECT * FROM mrs_report WHERE overall_status='critical' ORDER BY updated_at DESC LIMIT 5"))]);
@@ -536,7 +640,7 @@ route('POST', 'reports/(\d+)/send', function ($id) use ($in) {
         . '<br>첨부: ' . $h(implode(', ', array_column($files, 'filename'))) . '</div></div>';
     $text = $msg . ($sig ? "\n\n-- \n$sig\n$company" : '');
     $status = 'sent'; $err = '';
-    try { smtp_send($to, $cc, $subject, $text, $html, array_map(function ($f) { return [$f['filename'], data_dir() . '/' . $f['stored_path']]; }, $files)); upd('mrs_report', ['status' => 'sent', 'sent_at' => now()], $id); }
+    try { mail_send($to, $cc, $subject, $text, $html, array_map(function ($f) { return [$f['filename'], data_dir() . '/' . $f['stored_path']]; }, $files)); upd('mrs_report', ['status' => 'sent', 'sent_at' => now()], $id); }
     catch (Throwable $e) { $status = 'failed'; $err = $e->getMessage(); }
     ins('mrs_mail_log', ['report_id' => (int)$id, 'recipients' => je($to), 'cc' => je($cc), 'subject' => $subject, 'status' => $status, 'error' => $err, 'sent_by' => $me['id'], 'created_at' => now()]);
     audit('report.send', $r['report_no'], "$status: " . implode(', ', $to));
@@ -556,7 +660,7 @@ route('GET', 'settings', function () {
     need('settings.manage'); $items = [];
     foreach (SETTING_FIELDS as $k => [$label, $kind, $secret, $def]) {
         $raw = one("SELECT v FROM mrs_setting WHERE k=?", [$k]); $v = conf($k);
-        $items[] = ['key' => $k, 'label' => $label, 'kind' => $kind, 'secret' => $secret, 'value' => $secret ? '' : $v, 'masked' => $secret ? mask($v, $k === 'anthropic_key') : '', 'is_set' => $secret ? $v !== '' : null,
+        $items[] = ['key' => $k, 'label' => $label, 'kind' => $kind, 'secret' => $secret, 'value' => $secret ? '' : $v, 'masked' => $secret ? mask($v, $k === 'anthropic_key') : '', 'is_set' => $secret ? $v !== '' : null, 'options' => SETTING_OPTIONS[$k] ?? null,
             'source' => ($raw && $raw['v'] !== '') ? 'db' : 'default'];
     }
     out(['items' => $items, 'legacy_ok' => (bool)legacy_table(), 'zip' => class_exists('ZipArchive'), 'curl' => function_exists('curl_init'), 'openssl' => function_exists('openssl_encrypt'),
@@ -569,9 +673,10 @@ route('PUT', 'settings', function () use ($in) {
         [$label, $kind, $secret] = SETTING_FIELDS[$k];
         if ($secret && ($v === null || (string)$v === '')) continue; // 비밀값은 비워 두면 기존 값 유지
         if ($kind === 'number') { if (!is_numeric($v)) fail("{$label}은(는) 숫자여야 합니다."); $v = (string)(int)$v; }
-        elseif ($kind === 'select' && !in_array($v, ['ssl', 'starttls', 'none'], true)) fail("{$label} 값이 올바르지 않습니다.");
+        elseif ($kind === 'select' && !isset(SETTING_OPTIONS[$k][$v])) fail("{$label} 값이 올바르지 않습니다.");
         else $v = trim((string)$v);
         if ($k === 'legacy_table' && $v !== '' && !preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,63}$/', $v)) fail('테이블 이름 형식이 올바르지 않습니다.');
+        if (in_array($k, ['m365_tenant', 'm365_client_id'], true) && $v !== '' && !preg_match('/^[A-Za-z0-9.\-]{3,100}$/', $v)) fail("{$label} 형식이 올바르지 않습니다. Azure 화면의 값을 그대로 복사해 주세요.");
         if ($k === 'mail_from' && $v !== '' && !filter_var($v, FILTER_VALIDATE_EMAIL)) fail('보내는 사람 주소 형식이 올바르지 않습니다.');
         set_setting($k, $v, $secret, $me['id']); $changed[] = $k;
     }
@@ -581,7 +686,7 @@ route('PUT', 'settings', function () use ($in) {
 });
 route('POST', 'settings/test-mail', function () use ($in) {
     need('settings.manage'); $to = trim((string)($in['to'] ?? '')); if (!filter_var($to, FILTER_VALIDATE_EMAIL)) fail('받는 주소를 확인하세요.');
-    try { smtp_send([$to], [], '[MRS] SMTP 설정 확인 메일', 'MRS SMTP 설정이 정상입니다.', '<p>MRS SMTP 설정이 정상입니다.</p>', []); } catch (Throwable $e) { fail('발송 실패: ' . $e->getMessage(), 502); }
+    try { $how = conf('mail_method') === 'm365' ? 'Microsoft 365' : 'SMTP'; mail_send([$to], [], "[MRS] 메일 설정 확인 ($how)", "MRS 메일 설정($how)이 정상입니다.", "<p>MRS 메일 설정(<b>$how</b>)이 정상입니다.</p>", []); } catch (Throwable $e) { fail('발송 실패: ' . $e->getMessage(), 502); }
     out(['ok' => true]);
 });
 route('GET', 'health', function () use ($https, $base, $sdir) {

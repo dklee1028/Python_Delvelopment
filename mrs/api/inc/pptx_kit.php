@@ -3,9 +3,11 @@
    좌표·크기 단위는 EMU (1cm = 360000, 1pt = 12700). */
 
 const FONT = '맑은 고딕';
-const C_BLUE = '1969A5'; const C_BLACK = '040000'; const C_NAVY = '0B2E4F'; const C_INK = '1F2937'; const C_GREY = '6B7785';
-const C_LINE = 'D5DEE8'; const C_LIGHT = 'EEF4FA'; const C_WHITE = 'FFFFFF'; const C_RED = 'D64545'; const C_AMBER = 'E09A2B';
-const C_GREEN = '2E9E6A'; const C_SKY = 'B9D3EA'; const C_ZEBRA = 'F8FAFC'; const C_TRACK = 'E6ECF2';
+/* 온화한 색 구성: 진한 남색 띠 대신 옅은 회청색 바탕 + 차분한 상태색 */
+const C_BLUE = '4A7FB0'; const C_BLACK = '040000'; const C_NAVY = '2F4A66'; const C_INK = '333B45'; const C_GREY = '7D8793';
+const C_LINE = 'DEE5EC'; const C_LIGHT = 'F2F6F9'; const C_WHITE = 'FFFFFF'; const C_RED = 'C4675E'; const C_AMBER = 'C99A45';
+const C_GREEN = '5A9A7B'; const C_SKY = 'CBDCEA'; const C_ZEBRA = 'FAFBFC'; const C_TRACK = 'ECF0F4'; const C_HEAD = 'E6EDF4'; const C_PALE = 'F7F9FB';
+const SOFT_OF = [C_RED => 'F6E4E1', C_AMBER => 'F6EEDC', C_GREEN => 'E2F0E8', C_BLUE => 'E3ECF5', C_NAVY => 'E6EDF4'];
 const STATUS_COLOR = ['critical' => C_RED, 'warning' => C_AMBER, 'normal' => C_GREEN, 'info' => C_BLUE];
 const STATUS_TEXT = ['critical' => 'Critical', 'warning' => 'Warning', 'normal' => 'Normal', 'info' => 'Info'];
 
@@ -155,6 +157,7 @@ function k_rect($s, $x, $y, $w, $h, $fill = C_LIGHT, $line = null, $shape = 'rec
         . ($inner ?: '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="ko-KR" sz="100"/></a:p></p:txBody>') . '</p:sp>');
 }
 function k_pill($s, $x, $y, $w, $h, $label, $fill, $color = C_WHITE, $size = 9) {
+    if ($color === C_WHITE && isset(SOFT_OF[$fill])) { $color = $fill === C_NAVY ? C_NAVY : $fill; $fill = SOFT_OF[$fill]; } // 진한 칠 대신 옅은 바탕 + 색 글자
     $inner = '<p:txBody><a:bodyPr wrap="square" lIns="18000" tIns="0" rIns="18000" bIns="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/>' . para_xml($label, $size, true, $color, 'c', 1.0) . '</p:txBody>';
     k_rect($s, $x, $y, $w, $h, $fill, null, 'roundRect', 1.0, $inner);
 }
@@ -186,7 +189,7 @@ function text_pt($str, $size) { $t = 0; foreach (preg_split('//u', (string)$str,
 function row_need($val, $wemu, $size) {
     $avail = max($wemu / 12700 - 9, 10); $lines = 0;
     foreach (explode("\n", (string)$val) as $part) $lines += max(1, (int)ceil(text_pt($part, $size) / $avail));
-    return (int)round($lines * $size * 1.32 * 12700 + cm(0.2));
+    return (int)round($lines * $size * 1.3 * 12700 + cm(0.13));
 }
 function status_tint($val) {
     $k = mb_strtolower((string)$val);
@@ -198,7 +201,7 @@ function status_tint($val) {
 /* 표. rows: 문자열 또는 ['v'=>값, 'span'=>열수, 'color'=>, 'bold'=>] 셀의 2차원 배열. 반환: 표 하단 y
    opts: col_w, header(true), size(8.5), row_h, header_fill, zebra(true), align(['c','l',..]), label_cols([]), status_col, tint(fn) */
 function k_table($s, $x, $y, $w, $rows, $o = []) {
-    $o += ['col_w' => null, 'header' => true, 'size' => 8.5, 'row_h' => cm(0.62), 'header_fill' => C_NAVY, 'zebra' => true, 'align' => null, 'label_cols' => [], 'status_col' => null, 'tint' => null];
+    $o += ['col_w' => null, 'header' => true, 'size' => 8.5, 'row_h' => cm(0.62), 'header_fill' => C_HEAD, 'zebra' => true, 'align' => null, 'label_cols' => [], 'status_col' => null, 'tint' => null];
     $nc = 0; foreach ($rows as $r) { $c = 0; foreach ($r as $cell) $c += is_array($cell) ? ($cell['span'] ?? 1) : 1; $nc = max($nc, $c); }
     $cw = $o['col_w'] ?: array_fill(0, $nc, 1); $tot = array_sum($cw);
     $widths = []; for ($i = 0; $i < $nc; $i++) $widths[] = (int)($w * ($cw[$i] ?? 1) / $tot);
@@ -215,7 +218,7 @@ function k_table($s, $x, $y, $w, $rows, $o = []) {
         foreach ($cells as [$c, $sp, $cell]) {
             $v = is_array($cell) ? ($cell['v'] ?? '') : $cell; $v = ($v === null || (string)$v === '') ? ' ' : (string)$v;
             $head = $o['header'] && $ri === 0; $color = C_INK; $bold = false;
-            if ($head) { $fill = $o['header_fill']; $color = C_WHITE; $bold = true; }
+            if ($head) { $fill = $o['header_fill']; $color = $fill === C_HEAD ? C_NAVY : C_WHITE; $bold = true; }
             elseif (in_array($c, $o['label_cols'], true)) { $fill = C_LIGHT; $color = C_NAVY; $bold = true; }
             else $fill = ($o['zebra'] && $ri % 2 === 0) ? C_ZEBRA : C_WHITE;
             if (!$head && $o['status_col'] !== null && $c === $o['status_col'] && ($t = status_tint($v))) { $color = $t; $bold = true; }
@@ -275,7 +278,7 @@ function k_donut($s, $x, $y, $size, $value, $label, $color = null, $sub = '') {
     if ($sub !== '') k_text($s, $x - cm(0.5), $y + $size + cm(0.05), $size + cm(1), cm(0.5), $sub, 7.5, true, $color, 'c', 't', 1.0);
 }
 function k_kpi($s, $x, $y, $w, $h, $value, $label, $color = C_NAVY, $accent = C_BLUE) {
-    k_rect($s, $x, $y, $w, $h, C_WHITE, C_LINE, 'roundRect', 0.08);
+    k_rect($s, $x, $y, $w, $h, C_PALE, C_LINE, 'roundRect', 0.08);
     k_rect($s, $x, $y + cm(0.15), cm(0.12), $h - cm(0.3), $accent);
     k_text($s, $x + cm(0.3), $y + cm(0.1), $w - cm(0.4), (int)($h * 0.55), $value, 16, true, $color, 'l', 'm', 1.0);
     k_text($s, $x + cm(0.3), $y + (int)($h * 0.58), $w - cm(0.4), (int)($h * 0.38), $label, 7.5, false, C_GREY, 'l', 't', 1.05);

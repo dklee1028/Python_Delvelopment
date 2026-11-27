@@ -248,7 +248,8 @@ function bindReportRows(v, reload) {
 // ───────────────────────── 보고서 생성 마법사 ─────────────────────────
 async function pageNew(v) {
   const W = { step: 1, customer: null, type: "regular", subtype: "os_upgrade", template_id: null, eq: [], logs: [], pending: [], plan: {}, date: new Date().toISOString().slice(0, 10), codes: ["PM"] };
-  S.customers = await api("customers");
+  S.customers = await api("customers?scope=mine"); W.allCust = false;
+  if (!S.customers.length) { S.customers = await api("customers?scope=all"); W.allCust = true; }
   const C = S.catalog;
   const steps = ["고객 선택", "보고서 종류", "장비 · 로그", "세부 정보"];
   const draw = async () => {
@@ -257,17 +258,18 @@ async function pageNew(v) {
       <button class="btn primary" id="wz-next">${W.step === 4 ? "✨ 분석 시작 & 보고서 초안 만들기" : "다음 →"}</button></div>`;
     const z = $("#wz");
     if (W.step === 1) {
-      z.innerHTML = `<div class="card"><div class="row"><input type="search" id="cq" placeholder="고객명/주소 검색" style="max-width:360px">
+      z.innerHTML = `<div class="card"><div class="row"><input type="search" id="cq" placeholder="고객명/주소 검색" style="max-width:360px"><label class="small row" style="gap:6px"><input type="checkbox" id="call" ${W.allCust ? "checked" : ""}> 다른 담당자 고객도 보기</label>
         ${can("customer.edit") ? '<a class="btn right" href="#/customers">＋ 고객 등록/기존 DB 연결</a>' : ""}</div><div class="pick" id="cl" style="margin-top:14px"></div></div>`;
       const list = () => {
         const q = $("#cq").value.trim();
         const rows = S.customers.filter((c) => !q || c.name.includes(q) || (c.address || "").includes(q));
         $("#cl").innerHTML = rows.map((c) => `<div class="opt ${W.customer?.id === c.id ? "on" : ""}" data-c="${c.id}"><div class="em">🏢</div><b>${esc(c.name)}</b>
-          <small>${esc(c.address || c.site || "")}</small><div class="row small muted" style="margin-top:8px">장비 ${c.equipment_count} · 보고서 ${c.report_count} ${c.linked ? '<span class="chip">DB 연결</span>' : ""}</div></div>`).join("")
+          <small>${esc(c.address || c.site || "")}</small><div class="row small muted" style="margin-top:8px">${c.my_role ? roleChip(c.my_role) : ""} 장비 ${c.equipment_count} · 보고서 ${c.report_count} ${c.health ? healthCell(c.health) : ""}</div></div>`).join("")
           || '<div class="empty">등록된 고객이 없습니다. 고객 메뉴에서 등록하세요.</div>';
         $$("[data-c]", z).forEach((o) => o.onclick = async () => { W.customer = await api("customers/" + o.dataset.c); W.eq = []; W.logs = []; list(); });
       };
       $("#cq").oninput = list; list();
+      $("#call").onchange = async () => { W.allCust = $("#call").checked; S.customers = await api("customers?scope=" + (W.allCust ? "all" : "mine")); list(); };
     } else if (W.step === 2) {
       const types = [["regular", "🗓️", "정기점검 보고서", "정기 예방 점검 결과"], ["special", "🔍", "특별점검 보고서", "장애·이상 징후 집중 점검"], ["workplan", "🛠️", "작업계획서", "OS·컨트롤러·디스크·장애처리 등"], ["custom", "🧩", "고객 양식 보고서", "고객이 요청한 별도 양식"]];
       const tpls = await api("templates?customer_id=" + W.customer.id);
@@ -354,9 +356,14 @@ function setupDrop(drop, input, onFiles) {
   drop.addEventListener("drop", (e) => e.dataTransfer.files.length && onFiles([...e.dataTransfer.files]));
 }
 
+// 단계 번호: 단계 이름이 바뀌는 곳마다 1, 2, 3… 같은 단계 안에서는 1-1, 1-2 … (순서를 옮기면 바로 다시 매김)
+const phaseName = (p) => String(p || "").replace(/^\s*\d+(\s*[.\-)]\s*\d+)*\s*[.)]?\s*/, "").trim();
+function stepNumbers(steps) { let pi = 0, si = 0, last = null; return steps.map((s) => { const n = phaseName(s.phase); if (last === null || n !== last) { pi++; si = 0; last = n; } si++; return { no: `${pi}-${si}`, pn: pi, first: si === 1 }; }); }
 function planEditor(box, plan) {
   const C = S.catalog;
+  plan.steps = (plan.steps || []).map((s) => ({ ...s, phase: phaseName(s.phase) }));
   const draw = () => {
+    const nums = stepNumbers(plan.steps);
     const total = plan.steps.reduce((a, s) => a + (+s.minutes || 0), 0);
     box.innerHTML = `<h3>작업 계획</h3><div class="grid g2">
       <div><label class="f">작업 일정</label><input type="text" data-p="schedule" value="${esc(plan.schedule || "")}" placeholder="예) 2026-12-05(토) 22:00 ~ 02:00"></div>
@@ -364,21 +371,24 @@ function planEditor(box, plan) {
       <div><label class="f">작업 목적 / 원인</label><input type="text" data-p="purpose" value="${esc(plan.purpose || "")}" placeholder="예) EOS 대응, 디스크 Fail 교체"></div>
       <div><label class="f">목표 버전 / 교체 부품</label><input type="text" data-p="target" value="${esc(plan.target || "")}" placeholder="예) ONTAP 9.14.1P5"></div></div>
       <label class="f">상세 작업 절차 <span class="chip">총 ${total}분 · ${Math.floor(total / 60)}시간 ${total % 60}분</span></label>
-      <div style="overflow:auto"><table class="t steps-table"><thead><tr><th>단계</th><th>작업 항목</th><th style="width:40%">작업 상세</th><th style="width:80px">분</th><th style="width:130px">서비스 영향</th><th></th></tr></thead><tbody>
-      ${plan.steps.map((s, i) => `<tr><td><input type="text" data-s="${i}" data-k="phase" value="${esc(s.phase)}"></td><td><input type="text" data-s="${i}" data-k="activity" value="${esc(s.activity)}"></td>
+      <div style="overflow:auto"><table class="t steps-table"><thead><tr><th style="width:52px">No</th><th>단계</th><th>작업 항목</th><th style="width:40%">작업 상세</th><th style="width:80px">분</th><th style="width:130px">서비스 영향</th><th></th></tr></thead><tbody>
+      ${plan.steps.map((s, i) => `<tr style="${nums[i].first && i ? "border-top:2px solid var(--line)" : ""}"><td class="mono"><b>${nums[i].no}</b></td><td><div class="row" style="gap:4px;flex-wrap:nowrap"><span class="small muted">${nums[i].pn}.</span><input type="text" data-s="${i}" data-k="phase" value="${esc(s.phase)}" placeholder="단계 이름"></div></td><td><input type="text" data-s="${i}" data-k="activity" value="${esc(s.activity)}"></td>
         <td><input type="text" data-s="${i}" data-k="detail" value="${esc(s.detail)}"></td><td><input type="number" data-s="${i}" data-k="minutes" value="${esc(s.minutes)}"></td>
         <td><input type="text" data-s="${i}" data-k="impact" value="${esc(s.impact)}"></td>
-        <td style="white-space:nowrap"><button class="btn sm ghost" data-up="${i}">↑</button><button class="btn sm ghost danger" data-rm="${i}">✕</button></td></tr>`).join("")}
+        <td style="white-space:nowrap"><button class="btn sm ghost" data-up="${i}" title="위로" ${i ? "" : "disabled"}>↑</button><button class="btn sm ghost" data-dn="${i}" title="아래로" ${i < plan.steps.length - 1 ? "" : "disabled"}>↓</button><button class="btn sm ghost" data-ins="${i}" title="아래에 단계 추가">＋</button><button class="btn sm ghost danger" data-rm="${i}">✕</button></td></tr>`).join("")}
       </tbody></table></div><button class="btn sm" id="add-step" style="margin-top:8px">＋ 단계 추가</button>
       <label class="f">롤백 계획</label><textarea data-p="rollback">${esc(plan.rollback || "")}</textarea>
       <label class="f">작업자</label>${(plan.workers || []).map((w, i) => `<div class="grid g4" style="margin-bottom:6px">${["company", "name", "role", "phone"].map((k) => `<input type="text" data-w="${i}" data-k="${k}" value="${esc(w[k] || "")}" placeholder="${{ company: "회사", name: "이름", role: "역할", phone: "연락처" }[k]}">`).join("")}</div>`).join("")}
       <button class="btn sm" id="add-w">＋ 작업자 추가</button>`;
     $$("[data-p]", box).forEach((i) => i.oninput = () => plan[i.dataset.p] = i.value);
+    $$("[data-s][data-k=phase]", box).forEach((i) => i.onchange = () => draw());
     $$("[data-s]", box).forEach((i) => i.oninput = () => { plan.steps[+i.dataset.s][i.dataset.k] = i.dataset.k === "minutes" ? +i.value : i.value; if (i.dataset.k === "minutes") { const t = plan.steps.reduce((a, s) => a + (+s.minutes || 0), 0); $(".chip", box).textContent = `총 ${t}분 · ${Math.floor(t / 60)}시간 ${t % 60}분`; } });
     $$("[data-w]", box).forEach((i) => i.oninput = () => plan.workers[+i.dataset.w][i.dataset.k] = i.value);
     $$("[data-rm]", box).forEach((b) => b.onclick = () => { plan.steps.splice(+b.dataset.rm, 1); draw(); });
     $$("[data-up]", box).forEach((b) => b.onclick = () => { const i = +b.dataset.up; if (i > 0) { [plan.steps[i - 1], plan.steps[i]] = [plan.steps[i], plan.steps[i - 1]]; draw(); } });
-    $("#add-step", box).onclick = () => { plan.steps.push({ phase: "", activity: "", detail: "", minutes: 10, impact: "없음" }); draw(); };
+    $$("[data-dn]", box).forEach((b) => b.onclick = () => { const i = +b.dataset.dn; if (i < plan.steps.length - 1) { [plan.steps[i + 1], plan.steps[i]] = [plan.steps[i], plan.steps[i + 1]]; draw(); } });
+    $$("[data-ins]", box).forEach((b) => b.onclick = () => { const i = +b.dataset.ins; plan.steps.splice(i + 1, 0, { phase: plan.steps[i].phase, activity: "", detail: "", minutes: 10, impact: "없음" }); draw(); });
+    $("#add-step", box).onclick = () => { plan.steps.push({ phase: plan.steps.length ? plan.steps[plan.steps.length - 1].phase : "", activity: "", detail: "", minutes: 10, impact: "없음" }); draw(); };
     $("#add-w", box).onclick = () => { (plan.workers = plan.workers || []).push({}); draw(); };
   };
   draw();
@@ -535,40 +545,93 @@ async function pageReports(v) {
 }
 
 // ───────────────────────── 고객 · 전산담당자 · 장비 ─────────────────────────
+// 고객 현황표: 평소에는 내가 정/부로 맡은 고객만, 필요하면 전체·미배정·다른 담당자 고객을 봅니다.
+const roleChip = (r) => r === "main" ? '<span class="chip sent">정</span>' : r === "sub" ? '<span class="chip gray">부</span>' : "";
+const healthCell = (h) => {
+  if (!h) return '<span class="small muted">로그 없음</span>';
+  const parts = [];
+  if (h.crit) parts.push(`<span class="chip critical">위험 ${h.crit}</span>`);
+  if (h.warn) parts.push(`<span class="chip warning">주의 ${h.warn}</span>`);
+  if (!parts.length) parts.push('<span class="chip normal">정상</span>');
+  return parts.join(" ");
+};
 async function pageCustomers(v, id) {
-  const list = await api("customers");
-  v.innerHTML = `<div class="grid" style="grid-template-columns:minmax(260px,340px) 1fr;align-items:start" id="cg">
-    <div class="card"><div class="row"><h3 style="margin:0">고객</h3>${can("customer.edit") ? '<button class="btn sm right" id="new-c">＋ 신규</button><button class="btn sm" id="legacy">🔗 기존 DB</button>' : ""}</div>
-      <input type="search" id="cq" placeholder="검색" style="margin-top:12px"><div id="cl" style="margin-top:10px;max-height:70vh;overflow:auto"></div></div>
-    <div id="cd"><div class="card empty"><div class="big">👈</div>고객을 선택하세요.</div></div></div>`;
-  if (innerWidth < 900) $("#cg").style.gridTemplateColumns = "1fr";
-  const drawList = () => {
+  if (id) return customerDetail(v, +id);
+  const users = can("customer.edit") ? await api("users").catch(() => []) : [];
+  S.custScope = S.custScope || "mine";
+  v.innerHTML = `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px">
+      <div class="tabs" style="margin:0;border:0" id="sc">${[["mine", "내 고객 (정·부)"], ["all", "전체"], ["unassigned", "정 담당 미지정"]].map(([k, l]) => `<button data-sc="${k}" class="${S.custScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      ${users.length ? `<select id="su" style="max-width:180px"><option value="">담당자별 보기…</option>${users.filter((u) => u.is_active).map((u) => `<option value="user:${u.id}" ${S.custScope === "user:" + u.id ? "selected" : ""}>${esc(u.full_name || u.username)} (정 ${u.assigned.main} · 부 ${u.assigned.sub})</option>`).join("")}</select>` : ""}
+      <input type="search" id="cq" placeholder="고객명·주소 검색" style="max-width:240px">
+      <span class="right"></span>${can("customer.edit") ? '<button class="btn sm" id="legacy">🔗 PMS 고객 불러오기</button><button class="btn sm primary" id="new-c">＋ 신규 고객</button>' : ""}</div>
+    <div id="sum" class="row small muted" style="margin-top:10px;gap:14px"></div>
+    <div style="overflow:auto;margin-top:8px"><table class="t cust-t"><thead><tr><th>고객</th><th>담당 (정 / 부)</th><th style="text-align:center">운영 장비</th><th>현재 상태 (최신 로그)</th><th>최근 로그</th><th>최근 보고서</th><th style="text-align:center">내 담당</th></tr></thead><tbody id="cl"></tbody></table></div></div>`;
+  let rows = [];
+  const load = async () => { $("#cl").innerHTML = '<tr><td colspan="7" class="muted">불러오는 중…</td></tr>'; rows = await api("customers?scope=" + encodeURIComponent(S.custScope)); draw(); };
+  const draw = () => {
     const q = $("#cq").value.trim();
-    $("#cl").innerHTML = list.filter((c) => !q || c.name.includes(q)).map((c) => `<div class="file-row" style="cursor:pointer;${+id === c.id ? "border-color:var(--blue)" : ""}" data-c="${c.id}">
-      <div class="grow"><b>${esc(c.name)}</b><div class="small muted">${esc(c.address || "-")}</div></div>${c.linked ? '<span class="chip">DB</span>' : ""}</div>`).join("") || '<div class="muted small">고객이 없습니다.</div>';
-    $$("[data-c]", v).forEach((r) => r.onclick = () => location.hash = "#/customers/" + r.dataset.c);
+    const list = rows.filter((c) => !q || c.name.includes(q) || (c.address || "").includes(q) || (c.site || "").includes(q));
+    const eqs = list.reduce((a, c) => a + c.equipment_count, 0), bad = list.filter((c) => c.health && (c.health.crit || c.health.warn)).length;
+    $("#sum").innerHTML = `<span>고객 <b>${list.length}</b>곳</span><span>운영 장비 <b>${eqs}</b>대</span><span>문제 있는 고객 <b style="color:var(--red)">${bad}</b>곳</span>`;
+    $("#cl").innerHTML = list.map((c) => `<tr data-c="${c.id}" style="cursor:pointer">
+      <td><b>${esc(c.name)}</b> ${c.linked ? '<span class="chip gray" style="font-size:10px">PMS</span>' : ""}<div class="small muted">${esc(c.site || c.address || "")}</div></td>
+      <td class="small">${c.main ? `<b>${esc(c.main.name)}</b>` : '<span class="muted">미지정</span>'}${c.subs.length ? `<div class="muted">부: ${c.subs.map((s) => esc(s.name)).join(", ")}</div>` : ""}</td>
+      <td style="text-align:center"><b>${c.equipment_count}</b>대${c.disposed_count ? `<div class="small muted">파기 ${c.disposed_count}</div>` : ""}</td>
+      <td>${c.equipment_count ? healthCell(c.health) : '<span class="small muted">장비 없음</span>'}</td>
+      <td class="small">${c.health?.last_log ? esc(c.health.last_log) : "-"}</td>
+      <td class="small">${c.last_report ? `${esc(c.last_report.date || "")} ${esc(c.last_report.type)}<div>${chip(c.last_report.status, (S.catalog?.status || {})[c.last_report.status])}</div>` : '<span class="muted">-</span>'}</td>
+      <td style="text-align:center;white-space:nowrap">${c.my_role ? roleChip(c.my_role) : ""}
+        <select class="small" data-as="${c.id}" style="width:auto"><option value="">${c.my_role ? "변경" : "담당하기"}</option><option value="main">정</option><option value="sub">부</option>${c.my_role ? '<option value="none">해제</option>' : ""}</select></td></tr>`).join("")
+      || `<tr><td colspan="7" class="empty">${S.custScope === "mine" ? "내가 맡은 고객이 없습니다. [전체] 탭이나 [PMS 고객 불러오기]에서 고객을 정(주 담당) 또는 부(보조)로 선택하세요." : "고객이 없습니다."}</td></tr>`;
+    $$("[data-c]", v).forEach((r) => r.onclick = (e) => { if (!e.target.closest("select")) location.hash = "#/customers/" + r.dataset.c; });
+    $$("[data-as]", v).forEach((sel) => sel.onchange = async () => {
+      if (!sel.value) return;
+      try { const r = await api(`customers/${sel.dataset.as}/assign`, { method: "POST", body: { kind: sel.value } }); toast(sel.value === "none" ? "담당을 해제했습니다." : sel.value === "main" && r.my_role === "sub" ? `이미 ${r.main ? r.main.name : "다른"} 님이 정 담당이라 부 담당으로 지정했습니다. (정 변경은 관리자·팀장)` : `${sel.value === "main" ? "정" : "부"} 담당으로 지정했습니다.`, "ok"); load(); }
+      catch (e) { toast(e.message, "err"); sel.value = ""; }
+    });
   };
-  $("#cq").oninput = drawList; drawList();
-  $("#new-c") && ($("#new-c").onclick = () => customerForm(null, (c) => location.hash = "#/customers/" + c.id));
-  $("#legacy") && ($("#legacy").onclick = legacyDialog);
-  if (id) await customerDetail($("#cd"), +id);
+  $$("[data-sc]", v).forEach((b) => b.onclick = () => { S.custScope = b.dataset.sc; $$("[data-sc]", v).forEach((x) => x.classList.toggle("on", x === b)); if ($("#su")) $("#su").value = ""; load(); });
+  $("#su") && ($("#su").onchange = () => { if (!$("#su").value) return; S.custScope = $("#su").value; $$("[data-sc]", v).forEach((x) => x.classList.remove("on")); load(); });
+  $("#cq").oninput = draw;
+  $("#new-c") && ($("#new-c").onclick = () => customerForm(null, async (c) => { await api(`customers/${c.id}/assign`, { method: "POST", body: { kind: "main" } }).catch(() => {}); location.hash = "#/customers/" + c.id; }));
+  $("#legacy") && ($("#legacy").onclick = () => legacyDialog(load));
+  await load();
 }
 
 async function customerDetail(box, id) {
-  const c = await api("customers/" + id);
+  S.showDisposed = !!S.showDisposed;
+  const c = await api(`customers/${id}${S.showDisposed ? "?disposed=1" : ""}`);
   const ed = can("customer.edit"), eqEd = can("equipment.edit");
-  box.innerHTML = `<div class="card"><div class="row"><div class="grow"><h2 style="font-size:20px">${esc(c.name)}</h2><div class="muted">${esc(c.address || "")} ${c.site ? "· " + esc(c.site) : ""}</div>
-      ${c.linked ? `<span class="chip" style="margin-top:6px">기존 고객DB 연결 · ID ${esc(c.legacy_customer_id)}</span>` : '<span class="chip gray" style="margin-top:6px">MRS 단독 등록</span>'}</div>
-      ${ed ? '<button class="btn" id="ed-c">수정</button><button class="btn danger" id="rm-c">삭제</button>' : ""}</div>${c.memo ? `<p class="small muted">${esc(c.memo)}</p>` : ""}</div>
+  const mgr = can("user.manage") || ["admin", "manager"].includes(S.me.role);
+  const users = mgr ? await api("users").catch(() => []) : [];
+  box.innerHTML = `<div class="row" style="margin-bottom:12px"><a class="btn sm" href="#/customers">← 고객 현황</a></div>
+    <div class="card"><div class="row"><div class="grow"><h2 style="font-size:20px">${esc(c.name)} ${c.my_role ? roleChip(c.my_role) : ""}</h2><div class="muted">${esc(c.address || "")} ${c.site ? "· " + esc(c.site) : ""}</div>
+      ${c.linked ? `<span class="chip gray" style="margin-top:6px">PMS 고객 연결 · ID ${esc(c.legacy_customer_id)}</span>` : '<span class="chip gray" style="margin-top:6px">MRS 단독 등록</span>'}</div>
+      ${ed ? '<button class="btn" id="ed-c">수정</button><button class="btn danger" id="rm-c">삭제</button>' : ""}</div>${c.memo ? `<p class="small muted">${esc(c.memo)}</p>` : ""}
+      <div class="row" style="margin-top:12px;gap:10px;flex-wrap:wrap"><span class="small"><b>정 담당</b> ${c.main ? esc(c.main.name) : '<span class="muted">미지정</span>'}</span>
+        <span class="small"><b>부 담당</b> ${c.subs.length ? c.subs.map((s) => esc(s.name) + (mgr ? ` <a href="#" data-unsub="${s.id}" title="해제">✕</a>` : "")).join(", ") : '<span class="muted">없음</span>'}</span>
+        <span class="right"></span>
+        <select id="my-as" style="width:auto"><option value="">내 담당 지정…</option><option value="main">정으로</option><option value="sub">부로</option>${c.my_role ? '<option value="none">해제</option>' : ""}</select>
+        ${mgr && users.length ? `<select id="ot-u" style="width:auto"><option value="">다른 담당자 지정…</option>${users.filter((u) => u.is_active).map((u) => `<option value="${u.id}">${esc(u.full_name || u.username)}</option>`).join("")}</select>
+          <select id="ot-k" style="width:auto"><option value="main">정</option><option value="sub">부</option></select><button class="btn sm" id="ot-go">지정</button>` : ""}</div>
+      <p class="small muted" style="margin:8px 0 0">담당을 바꾸거나 다른 사람에게 옮겨도 이 고객의 장비·로그·보고서는 그대로 유지됩니다.</p></div>
     <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">전산 담당자</h3>${ed ? '<button class="btn sm right" id="add-ct">＋ 담당자 추가</button>' : ""}</div>
       <table class="t" style="margin-top:12px"><thead><tr><th>이름</th><th>부서/직책</th><th>이메일</th><th>연락처</th><th>보고서 수신</th><th></th></tr></thead><tbody>
       ${c.contacts.map((x) => `<tr><td><b>${esc(x.name)}</b> ${x.is_primary ? '<span class="chip">대표</span>' : ""}</td><td>${esc(x.department)} ${esc(x.position)}</td><td>${esc(x.email)}</td><td>${esc(x.phone)}</td><td>${x.receive_reports ? "✅" : "—"}</td>
         <td style="white-space:nowrap">${ed ? `<button class="btn sm" data-ect="${x.id}">수정</button><button class="btn sm danger" data-rct="${x.id}">삭제</button>` : ""}</td></tr>`).join("") || '<tr><td colspan="6" class="muted">등록된 담당자가 없습니다.</td></tr>'}</tbody></table></div>
-    <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">장비</h3>${eqEd ? '<button class="btn sm right" id="add-eq">＋ 장비 추가</button>' : ""}</div>
-      <table class="t" style="margin-top:12px"><thead><tr><th>시스템</th><th>모델</th><th>S/N</th><th>OS</th><th>HA</th><th>디스크</th><th></th></tr></thead><tbody>
-      ${c.equipment.map((e) => `<tr style="${e.is_active ? "" : "opacity:.5"}"><td><b>${esc(e.name)}</b></td><td>${esc(e.vendor)} ${esc(e.model)}</td><td class="mono small">${esc(e.serial)}</td><td>${esc(e.os_version)}</td><td>${esc(e.ha_type)}</td><td>${esc(e.disk_info)}</td>
-        <td style="white-space:nowrap"><a class="btn sm" href="#/logs/${c.id}">로그</a>${eqEd ? `<button class="btn sm" data-eeq="${e.id}">수정</button><button class="btn sm danger" data-req="${e.id}">삭제</button>` : ""}</td></tr>`).join("") || '<tr><td colspan="7" class="muted">등록된 장비가 없습니다.</td></tr>'}</tbody></table></div>`;
+    <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">장비</h3><span class="small muted">운영 ${c.equipment_count}대${c.disposed_count ? ` · 파기 ${c.disposed_count}대` : ""}</span>
+      <label class="small row right" style="gap:6px"><input type="checkbox" id="shw-d" ${S.showDisposed ? "checked" : ""}> 파기장비 포함</label>${eqEd ? '<button class="btn sm" id="add-eq">＋ 장비 추가</button>' : ""}</div>
+      <table class="t" style="margin-top:12px"><thead><tr><th>시스템</th><th>모델</th><th>S/N</th><th>OS</th><th>HA</th><th>최신 로그 상태</th><th></th></tr></thead><tbody>
+      ${c.equipment.map((e) => `<tr style="${e.disposed ? "opacity:.55" : ""}"><td><b>${esc(e.name)}</b>${e.disposed ? `<div class="small"><span class="chip gray">파기 ${esc(e.disposed_at)}</span> ${esc(e.dispose_note)}</div>` : ""}</td><td>${esc(e.vendor)} ${esc(e.model)}</td><td class="mono small">${esc(e.serial)}</td><td>${esc(e.os_version)}</td><td>${esc(e.ha_type)}</td>
+        <td class="small">${e.last_log ? `${healthCell({ crit: e.last_log.crit, warn: e.last_log.warn })} <span class="muted">${esc(e.last_log.at)}</span>` : '<span class="muted">로그 없음</span>'}</td>
+        <td style="white-space:nowrap"><a class="btn sm" href="#/logs/${c.id}">로그</a>${eqEd ? (e.disposed ? `<button class="btn sm" data-rst="${e.id}">복원</button><button class="btn sm danger" data-req="${e.id}">완전 삭제</button>`
+          : `<button class="btn sm" data-eeq="${e.id}">수정</button><button class="btn sm danger" data-dsp="${e.id}">파기</button>`) : ""}</td></tr>`).join("") || '<tr><td colspan="7" class="muted">등록된 장비가 없습니다.</td></tr>'}</tbody></table></div>`;
   const refresh = () => route();
+  const assign = async (body) => { try { const r = await api(`customers/${id}/assign`, { method: "POST", body }); toast(!body.user_id && body.kind === "main" && r.my_role === "sub" ? `이미 ${r.main ? r.main.name : "다른"} 님이 정 담당이라 부 담당으로 지정했습니다. (정 변경은 관리자·팀장)` : "담당을 바꿨습니다.", "ok"); refresh(); } catch (e) { toast(e.message, "err"); } };
+  $("#my-as").onchange = () => $("#my-as").value && assign({ kind: $("#my-as").value });
+  $("#ot-go") && ($("#ot-go").onclick = () => $("#ot-u").value ? assign({ user_id: +$("#ot-u").value, kind: $("#ot-k").value }) : toast("담당자를 고르세요.", "err"));
+  $$("[data-unsub]", box).forEach((a) => a.onclick = (e) => { e.preventDefault(); assign({ user_id: +a.dataset.unsub, kind: "none" }); });
+  $("#shw-d").onchange = () => { S.showDisposed = $("#shw-d").checked; refresh(); };
   $("#ed-c") && ($("#ed-c").onclick = () => customerForm(c, refresh));
   $("#rm-c") && ($("#rm-c").onclick = async () => { if (await confirmBox(`${c.name} 고객을 삭제할까요? (담당자·장비·로그 포함)`)) api("customers/" + id, { method: "DELETE" }).then(() => { toast("삭제되었습니다.", "ok"); location.hash = "#/customers"; }).catch((e) => toast(e.message, "err")); });
   $("#add-ct") && ($("#add-ct").onclick = () => contactForm(id, null, refresh));
@@ -576,7 +639,15 @@ async function customerDetail(box, id) {
   $$("[data-rct]", box).forEach((b) => b.onclick = async () => { if (await confirmBox("담당자를 삭제할까요?")) { await api("contacts/" + b.dataset.rct, { method: "DELETE" }); refresh(); } });
   $("#add-eq") && ($("#add-eq").onclick = () => equipmentForm(id, null, refresh));
   $$("[data-eeq]", box).forEach((b) => b.onclick = () => equipmentForm(id, c.equipment.find((x) => x.id === +b.dataset.eeq), refresh));
-  $$("[data-req]", box).forEach((b) => b.onclick = async () => { if (await confirmBox("장비를 삭제할까요? (로그/보고서 이력이 있으면 비활성화됩니다)")) { const r = await api("equipment/" + b.dataset.req, { method: "DELETE" }); toast(r.deactivated ? "이력이 있어 비활성화했습니다." : "삭제되었습니다.", "ok"); refresh(); } });
+  $$("[data-dsp]", box).forEach((b) => b.onclick = () => {
+    const e = c.equipment.find((x) => x.id === +b.dataset.dsp);
+    const m = modal(`<h3>장비 파기 처리</h3><p><b>${esc(e.name)}</b> (${esc(e.model)})를 파기 처리합니다. 현황과 새 보고서 선택에서는 빠지지만, 로그와 보고서 이력은 그대로 남아 [파기장비 포함]을 켜면 다시 볼 수 있습니다.</p>
+      <label class="f">파기 사유 / 메모</label><input type="text" id="dn" placeholder="예) 2026-11 장비 교체로 철수">
+      <div class="actions"><button class="btn" data-close>취소</button><button class="btn danger" id="dgo">파기 처리</button></div>`);
+    $("#dgo", m).onclick = (ev) => busy(ev.target, async () => { await api(`equipment/${e.id}/dispose`, { method: "POST", body: { note: $("#dn", m).value } }); m.remove(); toast("파기 처리했습니다.", "ok"); refresh(); });
+  });
+  $$("[data-rst]", box).forEach((b) => b.onclick = async () => { await api(`equipment/${b.dataset.rst}/restore`, { method: "POST" }); toast("복원했습니다.", "ok"); refresh(); });
+  $$("[data-req]", box).forEach((b) => b.onclick = async () => { if (await confirmBox("장비를 완전히 삭제할까요? (로그·보고서 이력이 있으면 삭제되지 않습니다)")) { try { await api("equipment/" + b.dataset.req, { method: "DELETE" }); toast("삭제되었습니다.", "ok"); refresh(); } catch (e) { toast(e.message, "err"); } } });
 }
 
 function formModal(title, fields, data, onSave) {
@@ -594,39 +665,54 @@ const customerForm = (c, done) => formModal(c ? "고객 수정" : "고객 신규
   async (d) => { const r = await api(c ? "customers/" + c.id : "customers", { method: c ? "PUT" : "POST", body: { ...d, legacy_customer_id: c?.legacy_customer_id || null } }); done(r); });
 const contactForm = (cid, ct, done) => formModal(ct ? "담당자 수정" : "전산 담당자 등록", [["name", "이름", "text", true], ["department", "부서"], ["position", "직책"], ["phone", "연락처"], ["email", "이메일", "email", false, true], ["receive_reports", "보고서 메일 수신", "check"], ["is_primary", "대표 담당자", "check"]], ct || { receive_reports: true },
   async (d) => { await api(ct ? "contacts/" + ct.id : `customers/${cid}/contacts`, { method: ct ? "PUT" : "POST", body: d }); done(); });
-const equipmentForm = (cid, e, done) => formModal(e ? "장비 수정" : "장비 등록", [["name", "시스템명/호스트명", "text", true], ["vendor", "제조사"], ["model", "모델 (로그에서 자동 인식)"], ["serial", "System S/N"], ["os_version", "OS 버전"], ["ha_type", "HA 구성 (예: HA Pair)"], ["disk_info", "디스크 (예: SAS 24EA)"], ["location", "위치"], ["contract_type", "계약 유형"], ["is_active", "사용 중", "check"], ["memo", "메모", "textarea", false, true]], e || { vendor: "NetApp", is_active: true },
-  async (d) => { await api(e ? "equipment/" + e.id : `customers/${cid}/equipment`, { method: e ? "PUT" : "POST", body: d }); done(); });
+const equipmentForm = (cid, e, done) => formModal(e ? "장비 수정" : "장비 등록", [["name", "시스템명/호스트명", "text", true], ["vendor", "제조사"], ["model", "모델 (로그에서 자동 인식)"], ["serial", "System S/N"], ["os_version", "OS 버전"], ["ha_type", "HA 구성 (예: HA Pair)"], ["disk_info", "디스크 (예: SAS 24EA)"], ["location", "위치"], ["contract_type", "계약 유형"], ["memo", "메모", "textarea", false, true]], e || { vendor: "NetApp" },
+  async (d) => { await api(e ? "equipment/" + e.id : `customers/${cid}/equipment`, { method: e ? "PUT" : "POST", body: { ...d, is_active: true } }); done(); });
 
-async function legacyDialog() {
-  const m = modal(`<h3>🔗 기존 고객 DB (MariaDB) 연결</h3><p class="small muted">기존 고객 테이블에서 고객명·주소를 읽어와 MRS 고객으로 연결합니다. 기존 테이블은 읽기만 하며 수정하지 않습니다.</p>
-    <div class="row"><input type="search" id="lq" placeholder="고객명/주소 검색"><button class="btn" id="ls">검색</button><button class="btn" id="lsync" title="연결된 고객명/주소를 기존 DB 기준으로 갱신">동기화</button></div><div id="lr" style="margin-top:12px;max-height:50vh;overflow:auto"></div>
+// PMS 고객 전체 목록 (개수 제한 없음). 여기서 바로 정/부 담당으로 연결합니다.
+async function legacyDialog(onDone) {
+  const m = modal(`<h3>🔗 PMS 고객 불러오기</h3><p class="small muted">PMS 고객 테이블을 읽기 전용으로 불러옵니다. 맡을 고객을 <b>정</b>(주 담당) 또는 <b>부</b>(보조)로 연결하세요. PMS 쪽 데이터는 바꾸지 않습니다.</p>
+    <div class="row"><input type="search" id="lq" placeholder="고객명·코드·주소로 거르기"><label class="small row" style="gap:6px;white-space:nowrap"><input type="checkbox" id="lonly"> 미연결만</label><button class="btn" id="lsync" title="연결된 고객명·주소를 PMS 기준으로 갱신">동기화</button></div>
+    <div class="small muted" id="lcnt" style="margin-top:8px"></div><div id="lr" style="margin-top:8px;max-height:56vh;overflow:auto"></div>
     <div class="actions"><button class="btn" data-close>닫기</button></div>`, "wide");
-  const search = async () => {
-    const r = await api("legacy/customers?q=" + encodeURIComponent($("#lq", m).value));
-    if (!r.enabled) { $("#lr", m).innerHTML = '<div class="missing">기존 고객 테이블이 설정되지 않았거나 찾을 수 없습니다. (.env 의 MRS_LEGACY_CUSTOMER_* 설정 확인)</div>'; return; }
-    $("#lr", m).innerHTML = `<table class="t"><thead><tr><th>ID</th><th>고객명</th><th>주소</th><th></th></tr></thead><tbody>${r.items.map((x) => `<tr><td class="mono">${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(x.address)}</td>
-      <td>${x.mrs_customer_id ? `<a class="btn sm" href="#/customers/${x.mrs_customer_id}">연결됨 →</a>` : `<button class="btn sm primary" data-link="${esc(x.id)}">연결</button>`}</td></tr>`).join("")}</tbody></table>`;
-    $$("[data-link]", m).forEach((b) => b.onclick = (e) => busy(e.target, async () => { const c = await api(`legacy/customers/${encodeURIComponent(b.dataset.link)}/link`, { method: "POST" }); toast(c.name + " 연결 완료", "ok"); m.remove(); location.hash = "#/customers/" + c.id; }));
+  const r = await api("legacy/customers");
+  if (!r.enabled) { $("#lr", m).innerHTML = '<div class="missing">PMS 고객 테이블을 찾지 못했습니다. [시스템 설정] → 기존 고객 DB 연동에서 테이블 이름을 확인하세요.</div>'; return; }
+  let changed = false;
+  const draw = () => {
+    const q = $("#lq", m).value.trim(), only = $("#lonly", m).checked;
+    const list = r.items.filter((x) => (!q || x.name.includes(q) || (x.code || "").includes(q) || (x.address || "").includes(q)) && (!only || !x.mrs_customer_id));
+    $("#lcnt", m).textContent = `PMS 고객 ${r.total}곳 중 ${list.length}곳 표시 · 연결됨 ${r.items.filter((x) => x.mrs_customer_id).length}곳`;
+    $("#lr", m).innerHTML = `<table class="t"><thead><tr><th>코드</th><th>고객명</th><th>주소</th><th>정 담당</th><th></th></tr></thead><tbody>${list.map((x) => `<tr><td class="mono small">${esc(x.code || x.id)}</td><td><b>${esc(x.name)}</b></td><td class="small">${esc(x.address)}</td>
+      <td class="small">${x.mrs_customer_id ? esc(x.main_name || "미지정") : '<span class="muted">-</span>'}</td>
+      <td style="white-space:nowrap"><button class="btn sm primary" data-link="${esc(x.id)}" data-k="main">정</button><button class="btn sm" data-link="${esc(x.id)}" data-k="sub">부</button>${x.mrs_customer_id ? `<a class="btn sm ghost" href="#/customers/${x.mrs_customer_id}">열기</a>` : ""}</td></tr>`).join("")}</tbody></table>`;
+    $$("[data-link]", m).forEach((b) => b.onclick = (e) => busy(e.target, async () => {
+      const c = await api(`legacy/customers/${encodeURIComponent(b.dataset.link)}/link`, { method: "POST", body: { kind: b.dataset.k } });
+      const it = r.items.find((x) => x.id === b.dataset.link); it.mrs_customer_id = c.id; it.main_name = c.main ? c.main.name : ""; changed = true;
+      toast(`${c.name} → ${c.my_role === "main" ? "정" : "부"} 담당으로 연결`, "ok"); draw();
+    }));
   };
-  $("#ls", m).onclick = search; $("#lq", m).onkeydown = (e) => e.key === "Enter" && search();
-  $("#lsync", m).onclick = (e) => busy(e.target, async () => { const r = await api("legacy/sync", { method: "POST" }); toast(`${r.updated}건 갱신`, "ok"); });
-  search();
+  $("#lq", m).oninput = draw; $("#lonly", m).onchange = draw;
+  $("#lsync", m).onclick = (e) => busy(e.target, async () => { const x = await api("legacy/sync", { method: "POST" }); toast(`${x.updated}건 갱신`, "ok"); });
+  m.addEventListener("mousedown", () => {}, { once: true });
+  const obs = new MutationObserver(() => { if (!document.body.contains(m) && changed && onDone) { obs.disconnect(); onDone(); } });
+  obs.observe($("#modal-root"), { childList: true });
+  draw();
 }
 
 // ───────────────────────── 장비 · 로그 보관함 ─────────────────────────
 async function pageLogs(v, cid) {
-  const custs = await api("customers");
+  const mine = await api("customers?scope=mine"); const all_ = await api("customers?scope=all");
+  const custs = [...mine, ...all_.filter((x) => !mine.some((m) => m.id === x.id))];
   cid = +cid || custs[0]?.id;
   if (!cid) { v.innerHTML = '<div class="card empty"><div class="big">🗄️</div>고객을 먼저 등록하세요.</div>'; return; }
-  const c = await api("customers/" + cid);
-  v.innerHTML = `<div class="card"><div class="row"><select id="lc" style="max-width:280px">${custs.map((x) => `<option value="${x.id}" ${x.id === cid ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+  const c = await api(`customers/${cid}${S.showDisposed ? "?disposed=1" : ""}`);
+  v.innerHTML = `<div class="card"><div class="row"><select id="lc" style="max-width:280px">${custs.map((x) => `<option value="${x.id}" ${x.id === cid ? "selected" : ""}>${x.my_role ? (x.my_role === "main" ? "[정] " : "[부] ") : ""}${esc(x.name)}</option>`).join("")}</select>
     <select id="le" style="max-width:220px"><option value="">전체 장비</option>${c.equipment.map((e) => `<option value="${e.id}">${esc(e.name)} (${esc(e.model)})</option>`).join("")}</select>
-    <input type="date" id="df" style="max-width:160px"><span class="muted">~</span><input type="date" id="dt" style="max-width:160px"></div></div>
+    <input type="date" id="df" style="max-width:160px"><span class="muted">~</span><input type="date" id="dt" style="max-width:160px"><label class="small row right" style="gap:6px"><input type="checkbox" id="shw-d" ${S.showDisposed ? "checked" : ""}> 파기장비 포함 (로그 포함)</label></div></div>
     ${can("log.upload") ? `<div class="drop" id="drop" style="margin-top:16px"><div class="big">📥</div><b>로그 파일을 끌어다 놓으면 ${esc(c.name)} 고객에 장비별 · 시점별로 보관됩니다</b><div class="small muted">장비를 위에서 선택하면 해당 장비로, 아니면 시리얼/호스트명으로 자동 매칭</div><input type="file" id="fi" multiple hidden></div>` : ""}
     <div class="card" style="margin-top:16px"><h3>로그 타임라인</h3><div id="tl"></div></div>`;
   $("#lc").onchange = () => location.hash = "#/logs/" + $("#lc").value;
   const load = async () => {
-    const qs = new URLSearchParams(); if ($("#le").value) qs.set("equipment_id", $("#le").value); if ($("#df").value) qs.set("date_from", $("#df").value); if ($("#dt").value) qs.set("date_to", $("#dt").value);
+    const qs = new URLSearchParams(); if (S.showDisposed) qs.set("disposed", "1"); if ($("#le").value) qs.set("equipment_id", $("#le").value); if ($("#df").value) qs.set("date_from", $("#df").value); if ($("#dt").value) qs.set("date_to", $("#dt").value);
     const logs = await api(`customers/${cid}/logs?` + qs);
     const byDay = {}; logs.forEach((l) => (byDay[l.collected_at.slice(0, 10)] = byDay[l.collected_at.slice(0, 10)] || []).push(l));
     $("#tl").innerHTML = Object.keys(byDay).length ? `<div class="timeline">${Object.entries(byDay).map(([d, ls]) => `<div class="tl"><b>${d}</b> <span class="small muted">${ls.length}건</span>
@@ -640,6 +726,7 @@ async function pageLogs(v, cid) {
     $$("[data-rm]", v).forEach((b) => b.onclick = async () => { if (await confirmBox("로그를 삭제할까요?")) { await api("logs/" + b.dataset.rm, { method: "DELETE" }); load(); } });
   };
   ["le", "df", "dt"].forEach((k) => $("#" + k).onchange = load);
+  $("#shw-d").onchange = () => { S.showDisposed = $("#shw-d").checked; route(); };
   if ($("#drop")) setupDrop($("#drop"), $("#fi"), async (files) => {
     const fd = new FormData(); files.forEach((f) => fd.append("files", f)); if ($("#le").value) fd.append("equipment_id", $("#le").value);
     try { const r = await api(`customers/${cid}/logs`, { method: "POST", form: fd }); toast(`${r.length}개 로그 보관 완료`, "ok"); load(); } catch (e) { toast(e.message, "err"); }
@@ -702,10 +789,10 @@ async function pageUsers(v) {
   const [users, cat] = await Promise.all([api("users"), api("permissions")]);
   const admin = can("user.manage");
   v.innerHTML = `<div class="card"><div class="row"><h3 style="margin:0">사용자</h3>${admin ? '<button class="btn primary sm right" id="new-u">＋ 사용자 등록</button>' : ""}</div>
-    <table class="t" style="margin-top:12px"><thead><tr><th>아이디</th><th>이름</th><th>역할</th><th>연락처</th><th>권한</th><th>최근 로그인</th><th></th></tr></thead><tbody>
+    <table class="t" style="margin-top:12px"><thead><tr><th>아이디</th><th>이름</th><th>역할</th><th>연락처</th><th>담당 고객</th><th>권한</th><th>최근 로그인</th><th></th></tr></thead><tbody>
     ${users.map((u) => `<tr style="${u.is_active ? "" : "opacity:.5"}"><td class="mono">${esc(u.username)}</td><td><b>${esc(u.full_name)}</b> <span class="small muted">${esc(u.title)}</span></td><td>${chip(u.role === "admin" ? "critical" : u.role === "manager" ? "warning" : u.role === "engineer" ? "sent" : "gray", u.role_label)}</td>
-      <td class="small">${esc(u.email)}<br>${esc(u.phone)}</td><td class="small">${u.permissions.length}/${Object.keys(cat.permissions).length}</td><td class="small muted">${esc((u.last_login_at || "").replace("T", " ").slice(0, 16))}</td>
-      <td style="white-space:nowrap">${admin ? `<button class="btn sm" data-eu="${u.id}">수정</button>${u.id !== S.me.id ? `<button class="btn sm danger" data-ru="${u.id}">삭제</button>` : ""}` : ""}</td></tr>`).join("")}</tbody></table></div>
+      <td class="small">${esc(u.email)}<br>${esc(u.phone)}</td><td class="small"><a href="#/customers" data-uc="${u.id}">정 ${u.assigned.main} · 부 ${u.assigned.sub}</a></td><td class="small">${u.permissions.length}/${Object.keys(cat.permissions).length}</td><td class="small muted">${esc((u.last_login_at || "").replace("T", " ").slice(0, 16))}</td>
+      <td style="white-space:nowrap">${admin ? `<button class="btn sm" data-eu="${u.id}">수정</button>${u.assigned.main + u.assigned.sub ? `<button class="btn sm" data-tr="${u.id}">담당 이관</button>` : ""}${u.id !== S.me.id ? `<button class="btn sm danger" data-ru="${u.id}">삭제</button>` : ""}` : ""}</td></tr>`).join("")}</tbody></table></div>
     ${admin ? '<div class="card" style="margin-top:16px"><h3>감사 로그</h3><div id="audit"></div></div>' : ""}`;
   const form = (u) => {
     const ov = { ...(u?.overrides || {}) };
@@ -731,6 +818,16 @@ async function pageUsers(v) {
     });
   };
   $("#new-u") && ($("#new-u").onclick = () => form(null));
+  $$("[data-uc]", v).forEach((a) => a.onclick = () => { S.custScope = "user:" + a.dataset.uc; });
+  // 담당 이관: 정/부 배정만 옮기고, 고객의 장비·로그·보고서는 그대로 둡니다.
+  $$("[data-tr]", v).forEach((b) => b.onclick = () => {
+    const u = users.find((x) => x.id === +b.dataset.tr);
+    const m = modal(`<h3>담당 고객 이관</h3><p><b>${esc(u.full_name || u.username)}</b>님이 맡은 고객 (정 ${u.assigned.main} · 부 ${u.assigned.sub})을 다른 사용자에게 옮깁니다. 고객의 장비·로그·보고서는 그대로 유지됩니다.</p>
+      <label class="f">받을 사용자</label><select id="tto">${users.filter((x) => x.is_active && x.id !== u.id).map((x) => `<option value="${x.id}">${esc(x.full_name || x.username)}</option>`).join("")}</select>
+      <label class="row small" style="margin-top:10px;gap:6px"><input type="checkbox" id="trep" checked> 진행 중(미완료) 보고서의 담당 엔지니어도 함께 변경</label>
+      <div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="tgo">이관</button></div>`);
+    $("#tgo", m).onclick = (e) => busy(e.target, async () => { const r = await api(`users/${u.id}/transfer`, { method: "POST", body: { to_user_id: +$("#tto", m).value, reports: $("#trep", m).checked } }); m.remove(); toast(`${r.moved}개 고객을 옮겼습니다.`, "ok"); route(); });
+  });
   $$("[data-eu]", v).forEach((b) => b.onclick = () => form(users.find((u) => u.id === +b.dataset.eu)));
   $$("[data-ru]", v).forEach((b) => b.onclick = async () => { if (await confirmBox("사용자를 삭제할까요?")) { await api("users/" + b.dataset.ru, { method: "DELETE" }).catch((e) => toast(e.message, "err")); route(); } });
   if (admin) {
@@ -744,13 +841,15 @@ async function pageSettings(v) {
   const d = await api("settings");
   const groups = [
     ["회사 정보", ["company_name", "company_address"]],
-    ["메일 발송 (SMTP)", ["smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password", "mail_from", "mail_from_name"]],
+    ["메일 발송", ["mail_method", "mail_from", "mail_from_name"]],
+    ["일반 SMTP", ["smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_password"]],
+    ["Microsoft 365 (OAuth)", ["m365_tenant", "m365_client_id", "m365_client_secret"]],
     ["Claude AI", ["anthropic_key", "ai_model"]],
     ["기존 고객 DB 연동", ["legacy_table"]],
   ];
   const by = Object.fromEntries(d.items.map((x) => [x.key, x]));
   const field = (x) => {
-    if (x.kind === "select") return `<div><label class="f">${esc(x.label)}</label><select data-k="${x.key}">${[["starttls", "STARTTLS (보통 587)"], ["ssl", "SSL/TLS (보통 465)"], ["none", "사용 안 함 (보통 25)"]].map(([k, l]) => `<option value="${k}" ${x.value === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>`;
+    if (x.kind === "select") return `<div><label class="f">${esc(x.label)}</label><select data-k="${x.key}">${Object.entries(x.options || {}).map(([k, l]) => `<option value="${esc(k)}" ${x.value === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
     const ph = x.secret ? (x.is_set ? `저장됨 ${x.masked} (바꿀 때만 입력)` : "미설정") : "";
     const type = x.kind === "password" ? "password" : x.kind === "number" ? "number" : "text";
     return `<div><label class="f">${esc(x.label)}</label><input type="${type}" data-k="${x.key}" value="${x.secret ? "" : esc(x.value)}" placeholder="${esc(ph)}" autocomplete="new-password">
@@ -758,17 +857,22 @@ async function pageSettings(v) {
   };
   const note = {
     "회사 정보": "보고서의 연락처와 이메일은 담당 엔지니어의 사용자 정보(사용자 · 권한)에서 가져옵니다.",
-    "메일 발송 (SMTP)": "보내는 사람 주소를 비우면 SMTP 계정 주소로 보냅니다. Gmail·네이버웍스 등은 앱 비밀번호가 필요할 수 있습니다.",
+    "메일 발송": "회사 Microsoft 365에서 \"보안 기본값\" 때문에 SMTP 로그인이 막히면(535 5.7.139) 발송 방식을 Microsoft 365로 바꾸세요. 이때 보내는 사람 주소는 실제 회사 메일함 주소여야 합니다.",
+    "일반 SMTP": "보내는 사람 주소를 비우면 SMTP 계정 주소로 보냅니다. Gmail·네이버웍스 등은 앱 비밀번호가 필요할 수 있습니다.",
+    "Microsoft 365 (OAuth)": "Azure 포털 → Microsoft Entra ID → 앱 등록에서 만든 앱의 값을 넣습니다. API 권한에 Microsoft Graph의 Mail.Send(애플리케이션 권한)를 추가하고 \"관리자 동의\"를 눌러야 합니다. 자세한 순서는 설치 안내서(README_설치안내.md)를 보세요.",
     "Claude AI": "API 키는 Claude Console(platform.claude.com) → API Keys에서 발급합니다. 사용한 만큼 과금되며 결제 수단 등록이 필요합니다. 키가 없으면 규칙 기반 초안으로 대신 작성합니다.",
     "기존 고객 DB 연동": `PMS 파트관리시스템의 고객 테이블(기본 pms_customers)을 읽기 전용으로 불러옵니다. 현재 상태: ${d.legacy_ok ? '<b style="color:var(--green)">연결됨</b>' : '<b style="color:var(--red)">테이블 없음</b>'}`,
   };
   const chk = (ok, label) => `<span class="chip ${ok ? "" : "warning"}">${ok ? "✔" : "!"} ${label}</span>`;
-  v.innerHTML = groups.map(([t, ks]) => `<div class="card" style="margin-bottom:16px"><h3>${t}</h3><div class="grid g2">${ks.map((k) => field(by[k])).join("")}</div>
+  v.innerHTML = groups.map(([t, ks]) => `<div class="card" data-grp="${esc(t)}" style="margin-bottom:16px"><h3>${t}</h3><div class="grid g2">${ks.map((k) => field(by[k])).join("")}</div>
     <p class="small muted" style="margin-top:10px">${note[t]}</p>
-    ${t.startsWith("메일") ? `<div class="row" style="margin-top:8px"><input type="email" id="tm-to" placeholder="테스트 받을 주소" value="${esc(S.me.email || "")}" style="max-width:280px"><button class="btn sm" id="tm">테스트 메일 보내기</button></div>` : ""}</div>`).join("")
+    ${t === "메일 발송" ? `<div class="row" style="margin-top:8px"><input type="email" id="tm-to" placeholder="테스트 받을 주소" value="${esc(S.me.email || "")}" style="max-width:280px"><button class="btn sm" id="tm">테스트 메일 보내기</button></div>` : ""}</div>`).join("")
     + `<div class="card" style="margin-bottom:16px"><h3>서버 점검</h3><div class="row">${chk(d.zip, "zip (PPT·엑셀)")}${chk(d.curl, "cURL (Claude)")}${chk(d.openssl, "openssl (암호화·메일)")}<span class="chip gray">PHP ${esc(d.php)}</span><span class="chip gray">업로드 한도 ${esc(d.upload_max)} / ${esc(d.post_max)}</span></div>
       <p class="small muted" style="margin-top:8px">대용량 로그(수십 MB)를 올리려면 호스팅 관리 화면에서 upload_max_filesize·post_max_size 를 늘려 주세요.</p></div>`
-    + `<div class="row"><span class="small muted">SMTP 비밀번호와 API 키는 암호화해 DB(mrs_setting)에 저장합니다.</span><button class="btn primary right" id="st-save">저장</button></div>`;
+    + `<div class="row"><span class="small muted">SMTP 비밀번호, Microsoft 365 클라이언트 암호, API 키는 암호화해 DB(mrs_setting)에 저장합니다.</span><button class="btn primary right" id="st-save">저장</button></div>`;
+  // 발송 방식에 맞는 입력 칸만 보이기
+  const sync = () => { const m = $("[data-k=mail_method]", v).value; $("[data-grp='일반 SMTP']", v).style.display = m === "smtp" ? "" : "none"; $("[data-grp='Microsoft 365 (OAuth)']", v).style.display = m === "m365" ? "" : "none"; };
+  $("[data-k=mail_method]", v).onchange = sync; sync();
   $("#st-save").onclick = (e) => busy(e.target, async () => {
     const values = {};
     $$("[data-k]", v).forEach((i) => { values[i.dataset.k] = i.value; });
@@ -777,6 +881,7 @@ async function pageSettings(v) {
     S.catalog = null; toast("설정을 저장했습니다.", "ok"); route();
   });
   $("#tm").onclick = (e) => busy(e.target, async () => {
+    if ($$("[data-k]", v).some((i) => !i.dataset.k.endsWith("secret") && !i.dataset.k.endsWith("password") && i.type !== "password" && i.value !== (by[i.dataset.k] || {}).value)) return toast("바뀐 설정을 먼저 [저장]한 뒤 테스트해 주세요.", "err");
     await api("settings/test-mail", { method: "POST", body: { to: $("#tm-to").value } });
     toast("테스트 메일을 보냈습니다.", "ok");
   });

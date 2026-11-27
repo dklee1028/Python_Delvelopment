@@ -121,13 +121,13 @@ class Xlsx {
 /* ---------- 보고서 엑셀 ---------- */
 function x_title($x, $ws, $title, $sub, $wc = 8) {
     $ws->merges[] = "A1:" . col_letter($wc) . "1"; $ws->merges[] = "A2:" . col_letter($wc) . "2";
-    $navy = $x->st->get(['fill' => C_NAVY]);
+    $navy = $x->st->get(['fill' => C_LIGHT]);
     for ($r = 1; $r <= 2; $r++) for ($c = 1; $c <= $wc; $c++) $ws->set($r, $c, null, $navy);
-    $ws->set(1, 1, $title, $x->st->get(['size' => 18, 'bold' => true, 'color' => C_WHITE, 'fill' => C_NAVY, 'indent' => 1]));
-    $ws->set(2, 1, $sub, $x->st->get(['size' => 9, 'color' => C_SKY, 'fill' => C_NAVY, 'indent' => 1]));
+    $ws->set(1, 1, $title, $x->st->get(['size' => 18, 'bold' => true, 'color' => C_NAVY, 'fill' => C_LIGHT, 'indent' => 1]));
+    $ws->set(2, 1, $sub, $x->st->get(['size' => 9, 'color' => C_GREY, 'fill' => C_LIGHT, 'indent' => 1]));
     $ws->heights[1] = 36; $ws->heights[2] = 20;
     $blue = $x->st->get(['fill' => C_BLUE]); for ($c = 1; $c <= $wc; $c++) $ws->set(3, $c, null, $blue);
-    $ws->heights[3] = 4;
+    $ws->heights[3] = 2;
     return 5;
 }
 function x_section($x, $ws, $r, $text) { $ws->set($r, 1, '▌ ' . $text, $x->st->get(['size' => 12, 'bold' => true, 'color' => C_NAVY])); $ws->heights[$r] = 22; return $r + 1; }
@@ -138,7 +138,7 @@ function x_table($x, $ws, $r, $rows, $o = []) {
             $head = $o['header'] && $i === 0;
             $long = is_string($v) && mb_strlen($v) >= 25;
             $st = ['size' => 9.5, 'border' => true, 'wrap' => true, 'h' => ($head || !$long) ? 'center' : null];
-            if ($head) $st += ['fill' => C_NAVY, 'bold' => true, 'color' => C_WHITE];
+            if ($head) $st += ['fill' => C_HEAD, 'bold' => true, 'color' => C_NAVY];
             elseif (in_array($j, $o['label_cols'], true)) $st += ['fill' => C_LIGHT, 'bold' => true, 'color' => C_NAVY];
             if (!$head && $o['status_col'] === $j && ($t = status_tint($v))) { $st['color'] = $t; $st['bold'] = true; }
             if (!$head && $o['tint'] && ($t = ($o['tint'])($j, $v))) { $st['color'] = $t; $st['bold'] = true; }
@@ -238,7 +238,7 @@ function x_workplan($x, $ctx) {
     ], ['header' => false, 'label_cols' => [0, 3]]);
     $eng = $ctx['engineer']; $who = $ctx['company']['name'] . "\n" . trim($eng['name'] . ' ' . $eng['title']);
     $rows = [['No', 'Type(단계)', 'Activity', '상세 작업 내용', 'Who', 'Time(분)', '서비스 영향/비고']]; $tot = 0;
-    foreach ($plan['steps'] ?? [] as $i => $s) { $m = (int)($s['minutes'] ?? 0); $tot += $m; $rows[] = [$i + 1, $s['phase'] ?? '', $s['activity'] ?? '', $s['detail'] ?? '', ($s['who'] ?? '') ?: $who, $m, $s['impact'] ?? '']; }
+    foreach ($plan['steps'] ?? [] as $i => $s) { $m = (int)($s['minutes'] ?? 0); $tot += $m; $rows[] = [$s['no'] ?? $i + 1, $s['phase'] ?? '', $s['activity'] ?? '', $s['detail'] ?? '', ($s['who'] ?? '') ?: $who, $m, $s['impact'] ?? '']; }
     $rows[] = ['', '', '', '총 소요시간', '', $tot, ''];
     $r = x_table($x, $ws, $r, $rows, ['tint' => function ($j, $v) { return ($j === 6 && is_string($v) && $v !== '' && mb_strpos($v, '없음') === false) ? C_RED : null; }]);
     $r = x_section($x, $ws, $r, '롤백 계획');

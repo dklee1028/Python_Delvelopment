@@ -56,6 +56,7 @@ function build_context($r) {
             'visual' => $vis[(string)$e['id']] ?? [], 'checks' => auto_checks($data['parsed'], $data['analysis'], $e['os_version'] ?: '')];
     }
     $st = $r['overall_status'] ?: 'normal'; $plan = jd($r['plan'], []);
+    if (!empty($plan['steps'])) $plan['steps'] = number_steps($plan['steps']);
     return [
         'report' => ['id' => (int)$r['id'], 'no' => $r['report_no'], 'type' => $r['report_type'], 'type_label' => REPORT_TYPES[$r['report_type']] ?? $r['report_type'],
             'subtype_label' => WORK_SUBTYPES[$r['work_subtype']] ?? '', 'title' => $r['title'], 'date' => $r['inspection_date'] ?: today(),
