@@ -72,6 +72,55 @@ function empty_parsed() {
     return ['system' => new stdClass(), 'aggregates' => [], 'volumes' => [], 'disks' => ['failed' => [], 'spare' => 0], 'ha' => new stdClass(),
         'ports_down' => [], 'events' => ['emergency' => 0, 'alert' => 0, 'error' => 0, 'panic' => 0, 'top' => []], 'autosupport' => null, 'lines' => 0];
 }
+/* 표 머리글(----- 줄 위의 제목 줄)을 보고 열 위치를 알아내 Aggregate·Volume 표를 읽습니다.
+   'storage aggregate show', 'aggr show -fields ...', 'volume show -fields ...', 'df -A' 처럼 열 순서가 달라도 읽을 수 있습니다.
+   이름이 길어 다음 줄로 넘어간 행도 이어 붙입니다. */
+function hdr_key($h) {
+    $h = strtolower(trim($h));
+    $map = ['aggregate' => 'aggr', 'aggr' => 'aggr', 'aggregate-name' => 'aggr', 'volume' => 'vol', 'vol' => 'vol', 'vserver' => 'svm', 'svm' => 'svm', 'node' => 'node', 'nodes' => 'node',
+        'size' => 'total', 'total' => 'total', 'kbytes' => 'total', 'available' => 'avail', 'availsize' => 'avail', 'avail' => 'avail', 'used' => 'used', 'usedsize' => 'used',
+        'used%' => 'pct', 'percent-used' => 'pct', 'capacity' => 'pct', 'use%' => 'pct', 'state' => 'state', 'type' => 'type', 'filesystem' => 'fs'];
+    return $map[$h] ?? null;
+}
+function parse_header_tables($lines, &$res, &$aggrSeen, &$volSeen) {
+    $S = '/^\d+(?:\.\d+)?\s?[KMGTP]?B$/i';
+    $n = count($lines);
+    for ($i = 1; $i < $n; $i++) {
+        if (!preg_match('/^\s*-{3,}(\s+-{2,})+\s*$/', $lines[$i])) continue;
+        $hdr = preg_split('/\s+/', trim($lines[$i - 1])); $keys = array_map('hdr_key', $hdr);
+        $isA = in_array('aggr', $keys, true) && !in_array('vol', $keys, true); $isV = in_array('vol', $keys, true);
+        if ((!$isA && !$isV) || !in_array('pct', $keys, true) && !(in_array('total', $keys, true) && (in_array('avail', $keys, true) || in_array('used', $keys, true)))) continue;
+        $cols = count($hdr); $buf = [];
+        for ($j = $i + 1; $j < $n; $j++) {
+            $ln = $lines[$j];
+            if (trim($ln) === '' || preg_match('/^\s*\d+ entries were displayed|^\s*[\w.\-]+::?\*?>|^### FILE/', $ln)) break;
+            if (!$buf && preg_match('/^\s/', $ln)) continue; // 앞 행의 마지막 열(예: RAID Status)이 줄바꿈된 것
+            $tok = preg_split('/\s+/', trim($ln));
+            // 이름이 길어 줄바꿈된 행: 토큰이 모자라면 다음 줄과 합칩니다
+            $buf = array_merge($buf, $tok);
+            if (count($buf) < $cols - 1) continue;
+            $row = $buf; $buf = [];
+            if (count($row) > $cols) $row = array_slice($row, 0, $cols); // RAID 상태 등 뒤쪽 여분 무시
+            $v = []; foreach ($keys as $k => $key) if ($key && isset($row[$k])) $v[$key] = $row[$k];
+            $t = isset($v['total']) ? (preg_match($S, $v['total']) ? to_gb($v['total']) : (ctype_digit($v['total']) ? (int)$v['total'] / 1048576 : 0)) : 0;
+            $a = isset($v['avail']) ? (preg_match($S, $v['avail']) ? to_gb($v['avail']) : (ctype_digit($v['avail']) ? (int)$v['avail'] / 1048576 : 0)) : 0;
+            $u = isset($v['used']) ? (preg_match($S, $v['used']) ? to_gb($v['used']) : (ctype_digit($v['used']) ? (int)$v['used'] / 1048576 : 0)) : max($t - $a, 0);
+            if (!$a && $t && $u) $a = max($t - $u, 0);
+            $pct = isset($v['pct']) ? (int)rtrim($v['pct'], '%') : ($t ? (int)round($u / $t * 100) : 0);
+            if (!$t && !isset($v['pct'])) continue;
+            if ($isA) {
+                $name = $v['aggr']; if (strpos($name, '/.snapshot') !== false || strpos($name, '/') !== false) continue;
+                if (isset($aggrSeen[$name])) continue; $aggrSeen[$name] = 1;
+                $res['aggregates'][] = ['node' => $v['node'] ?? '', 'name' => $name, 'total_gb' => $t, 'used_gb' => $u, 'avail_gb' => $a, 'pct' => $pct, 'state' => $v['state'] ?? 'online'];
+            } else {
+                $svm = $v['svm'] ?? ($v['node'] ?? ''); $name = $v['vol']; $key = $svm . '/' . $name;
+                if (isset($volSeen[$key]) || isset($volSeen[$name])) continue; $volSeen[$key] = 1;
+                $res['volumes'][] = ['node' => $svm, 'name' => $name, 'aggr' => $v['aggr'] ?? '', 'state' => $v['state'] ?? 'online', 'type' => strtoupper($v['type'] ?? ''), 'total_gb' => $t, 'used_gb' => $u, 'avail_gb' => $a,
+                    'pct' => $pct, 'inode_pct' => null, 'protocol' => ''];
+            }
+        }
+    }
+}
 function parse_text($txt) {
     $res = empty_parsed(); $sys = []; $ha = [];
     $res['lines'] = substr_count($txt, "\n") + 1;
@@ -87,7 +136,9 @@ function parse_text($txt) {
         foreach ($mm as $x) { $p = explode('/', trim($x[1], '/')); $inode[end($p)] = (int)$x[2]; }
 
     $section = ''; $nodes = []; $aggrSeen = []; $volSeen = []; $failedSeen = []; $ev = [];
-    foreach (preg_split('/\r\n|\n|\r/', $txt) as $raw) {
+    $allLines = preg_split('/\r\n|\n|\r/', $txt);
+    parse_header_tables($allLines, $res, $aggrSeen, $volSeen);
+    foreach ($allLines as $raw) {
         $line = rtrim($raw);
         if (trim($line) === '') continue;
         if (preg_match('/^\s*([\w.\-]+)(?:::?\*?>|\*?>)\s*(.+)$/', $line, $pm)) {
@@ -175,7 +226,29 @@ function parse_text($txt) {
     $res['events']['top'] = $top;
     $res['system'] = $sys ?: new stdClass();
     $res['ha'] = $ha ?: new stdClass();
+    // cDOT 점검 명령어별 결과 (정기=평시 / 특별=평시+상세)
+    if (preg_match('/^\s*[\w.\-]+::\*?>/m', $txt)) { $res['cdot'] = cdot_eval($txt); $res['os_mode'] = 'cdot'; }
+    elseif (preg_match('/^\s*[\w.\-]+\*?>\s/m', $txt)) $res['os_mode'] = '7mode';
+    $res['hw_hits'] = hw_scan($allLines);
     return $res;
+}
+/* 육안 점검과 연결되는 하드웨어 이상 문구 찾기 (PSU·팬·배터리·SFP·케이블·캐시·컨트롤러) */
+const HW_PATTERNS = [
+    'psu' => '/\b(psu|power supply|power_supply|pwr)\b.*\b(fail|fault|degrad|missing|bad|critical|not present|off\b)/i',
+    'fan' => '/\bfan\w*\b.*\b(fail|fault|degrad|stopped|critical|bad|slow|not present)/i',
+    'battery' => '/\b(battery|bbu|nvram\.battery|nvmem\.battery)\b.*\b(fail|fault|low|degrad|expir|critical|bad|discharg)/i',
+    'sfp' => '/\b(sfp|qsfp|transceiver|gbic)\b.*\b(fail|fault|unsupported|error|missing|bad|not qualified)/i',
+    'cable' => '/\b(cable|cabling|single[- ]path|mpha|multipath|link down|lost connectivity)\b.*\b(fail|fault|degrad|miss|error|down|lost)|\b(single[- ]path)\b/i',
+    'cache' => '/\b(flash ?cache|fcache|\becc\b|dimm|memory)\b.*\b(fail|fault|error|degrad|offline)/i',
+    'controller' => '/\b(controller|motherboard|nvram|service processor|bmc|iom\d*|io module)\b.*\b(fail|fault|offline|degrad|critical)/i',
+];
+function hw_scan($lines) {
+    $out = [];
+    foreach ($lines as $l) {
+        if (strlen($l) > 400 || preg_match('/^\s*(options|[\w.]+\s+(on|off)\s*$)/i', $l)) continue;
+        foreach (HW_PATTERNS as $k => $re) if ((!isset($out[$k]) || count($out[$k]) < 2) && preg_match($re, $l) && !preg_match('/\b(ok|normal|no fault|none|0 errors?)\b\s*$/i', $l)) $out[$k][] = mb_substr(trim($l), 0, 160);
+    }
+    return $out;
 }
 function parse_file($name, $data) { $p = parse_text(extract_text($name, $data)); $p['file'] = $name; return $p; }
 
@@ -195,6 +268,9 @@ function merge_parsed($list) {
         if (array_key_exists('autosupport', $p) && $p['autosupport'] !== null) $out['autosupport'] = $p['autosupport'];
         $out['lines'] += (int)($p['lines'] ?? 0);
         if (!empty($p['file'])) $files[] = $p['file'];
+        foreach ((array)($p['cdot'] ?? []) as $k => $v) $out['cdot'][$k] = $v;
+        foreach ((array)($p['hw_hits'] ?? []) as $k => $v) $out['hw_hits'][$k] = array_slice(array_merge($out['hw_hits'][$k] ?? [], $v), 0, 3);
+        if (!empty($p['os_mode'])) $out['os_mode'] = $p['os_mode'];
     }
     $aggr = array_values($aggr); usort($aggr, function ($a, $b) { return [$b['pct'], $a['name']] <=> [$a['pct'], $b['name']]; });
     $vols = array_values($vols); usort($vols, function ($a, $b) { return $b['pct'] <=> $a['pct']; });

@@ -201,6 +201,7 @@ function x_system($x, $ctx, $e) {
     foreach ($e['parsed']['volumes'] ?? [] as $v) $rows[] = [$v['node'] ?? '', $v['name'], round($v['total_gb'], 1), round($v['used_gb'], 1), (int)$v['pct'], isset($v['inode_pct']) ? (int)$v['inode_pct'] : '-', vol_remark($v['pct']), $v['aggr'] ?? ''];
     $r = x_table($x, $ws, $r, $rows, ['status_col' => 6]);
     if (count($rows) > 1) $ws->cf[] = ['E' . ($v0 + 1) . ':E' . ($v0 + count($rows) - 1), 'databar'];
+    if (!empty($e['parsed']['volumes_hidden'])) { $ws->set($r, 1, "※ 루트·제외 볼륨 {$e['parsed']['volumes_hidden']}개는 표에서 뺐습니다.", $x->st->get(['size' => 8, 'color' => C_GREY])); $r++; }
     $r = x_section($x, $ws, $r, '로그 분석 진단 (Diagnostic Findings)');
     $rows = [['등급', '구분', '진단', '상세', '권고 조치']];
     foreach ($e['analysis']['findings'] as $f) $rows[] = [STATUS_TEXT[$f['severity']], $f['category'], $f['title'], $f['detail'], $f['recommendation']];
@@ -213,6 +214,39 @@ function x_system($x, $ctx, $e) {
         $r = x_table($x, $ws, $r, $rows, ['tint' => function ($j, $v) { return $j === 0 ? (in_array($v, ['EMERGENCY', 'ALERT'], true) ? C_RED : C_AMBER) : null; }]);
     }
     if (!empty($e['parsed']['files'])) $ws->set($r, 1, '분석 로그: ' . implode(', ', $e['parsed']['files']), $x->st->get(['size' => 8, 'color' => C_GREY]));
+}
+function x_perf($x, $ctx, $e) {
+    $pf = $e['perf']; if (!$pf) return;
+    $ws = $x->sheet("성능 #{$e['seq']}");
+    $per = ($pf['period']['from'] ?? '') ? ' · 기간 ' . $pf['period']['from'] . ' ~ ' . ($pf['period']['to'] ?? '') : '';
+    $r = x_title($x, $ws, "System {$e['seq']} 성능 세부 분석 (Performance Archive)", $pf['file'] . " · 업로드 {$pf['uploaded']}$per · 판정 " . STATUS_TEXT[$pf['status']], 7);
+    $ws->widths = [1 => 12, 22, 34, 12, 12, 12, 10];
+    $r = x_section($x, $ws, $r, '주요 지표');
+    $rows = [['구분', '오브젝트', '카운터', '평균', '95%', '최대', '단위']];
+    foreach ($pf['metrics'] as $m) $rows[] = [PERF_GROUP_KO[$m['group']] ?? $m['group'], $m['object'], $m['counter'], $m['avg'], $m['p95'], $m['max'], $m['unit']];
+    $r = x_table($x, $ws, $r, $rows);
+    if ($pf['findings']) {
+        $r = x_section($x, $ws, $r, '성능 진단');
+        $rows = [['등급', '진단', '상세', '권고 조치']]; foreach ($pf['findings'] as $f) $rows[] = [STATUS_TEXT[$f['severity']], $f['title'], $f['detail'], $f['recommendation']];
+        $r = x_table($x, $ws, $r, $rows, ['status_col' => 0]);
+    }
+    $r = x_section($x, $ws, $r, '세부 분석 의견' . ($pf['model'] && $pf['model'] !== 'rule-based' ? ' (AI 초안, 엔지니어 검토)' : ''));
+    foreach (explode("\n", $pf['text']) as $ln) { $ws->set($r, 1, $ln, $x->st->get(['size' => 9])); $ws->merges[] = "A$r:G$r"; $r++; }
+}
+function x_cmd_checks($x, $ctx) {
+    if (!has_cmd_checks($ctx)) return;
+    $eqs = $ctx['equipments']; $sp = $ctx['report']['type'] === 'special';
+    $ws = $x->sheet('점검항목');
+    $r = x_title($x, $ws, $sp ? '점검 항목 결과 (특별점검: 평시 + 상세)' : '점검 항목 결과 (정기점검: 평시)', 'cDOT 점검 명령어 리스트 기준 · 로그에 없는 명령어는 "미수집"', 4 + count($eqs));
+    $ws->widths = [1 => 8, 16, 40, 36]; foreach ($eqs as $i => $e) $ws->widths[5 + $i] = 44;
+    $base = null; foreach ($eqs as $e) if ($e['cmd_checks']) { $base = $e['cmd_checks']; break; }
+    $rows = [array_merge(['구분', '항목', '명령어', '확인 포인트'], array_map(function ($e) { return "#{$e['seq']} 결과"; }, $eqs))];
+    foreach ($base as $c) {
+        $row = [$c['kind'] === 'detail' ? '상세' : '평시', $c['group'], $c['cmd'], $c['point']];
+        foreach ($eqs as $e) { $v = '-'; foreach ($e['cmd_checks'] as $cc) if ($cc['id'] === $c['id']) { $v = (STATUS_TEXT[$cc['status']] ?? '미수집') . ' · ' . $cc['summary']; break; } $row[] = $v; }
+        $rows[] = $row;
+    }
+    x_table($x, $ws, $r, $rows, ['label_cols' => [0], 'tint' => function ($j, $v) { return $j >= 4 && is_string($v) ? (strpos($v, 'Critical') === 0 ? C_RED : (strpos($v, 'Warning') === 0 ? C_AMBER : (strpos($v, 'Normal') === 0 ? C_GREEN : null))) : null; }]);
 }
 function x_visual($x, $ctx) {
     $eqs = $ctx['equipments']; $n = count($eqs);
@@ -251,6 +285,8 @@ function build_xlsx($ctx, $path) {
     x_summary($x, $ctx);
     if ($ctx['report']['type'] === 'workplan') x_workplan($x, $ctx);
     foreach ($ctx['equipments'] as $e) x_system($x, $ctx, $e);
+    foreach ($ctx['equipments'] as $e) x_perf($x, $ctx, $e);
+    x_cmd_checks($x, $ctx);
     x_visual($x, $ctx);
     $x->save($path);
 }

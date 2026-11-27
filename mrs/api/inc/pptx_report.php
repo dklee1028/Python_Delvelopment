@@ -53,7 +53,7 @@ function p_aggr_rows($e, $lim) {
     return $rows;
 }
 function p_vol_rows($e, $lim) {
-    $rows = [['Node', 'Volume', 'Total', 'Used', 'Used (%)', 'Inode (%)', 'Remarks']];
+    $rows = [['SVM / Node', 'Volume', 'Total', 'Used', 'Used (%)', 'Inode (%)', 'Remarks']];
     foreach (array_slice($e['parsed']['volumes'] ?? [], 0, $lim) as $v)
         $rows[] = [clip($v['node'] ?? '', 12), clip($v['name'], 18), human_gb($v['total_gb']), human_gb($v['used_gb']), $v['pct'] . '%', isset($v['inode_pct']) ? $v['inode_pct'] . '%' : '-', vol_remark($v['pct'])];
     if (count($rows) === 1) $rows[] = ['-', '로그 데이터 없음', '-', '-', '-', '-', '-'];
@@ -115,6 +115,32 @@ function p_check_matrix($s, $ctx, $y, $sw) {
     $tint = function ($r, $c, $v) use ($n) { if ($c < 2 || $c >= 2 + $n) return null; return ['✔' => C_GREEN, '!' => C_AMBER, '✖' => C_RED][$v] ?? C_GREY; };
     return k_table($s, M_(), $y, $sw - 2 * M_(), $rows, ['col_w' => array_merge([1.3, 2.2], array_fill(0, $n, 0.6), [2.8]), 'size' => 7, 'row_h' => cm(0.42), 'label_cols' => [0],
         'align' => array_merge(['c', 'l'], array_fill(0, $n, 'c'), ['l']), 'tint' => $tint]) + cm(0.3);
+}
+/* cDOT 점검 명령어 결과표 — 정기: 평시 항목 / 특별: 평시 + 상세 항목 */
+const CK_MARK = ['normal' => '✔', 'warning' => '!', 'critical' => '✖', 'info' => 'i', 'missing' => '-'];
+function has_cmd_checks($ctx) { foreach ($ctx['equipments'] as $e) if (!empty($e['cmd_checks'])) return true; return false; }
+function p_cmd_checks($s, $ctx, $y, $sw, $from = 0, $lim = 99) {
+    $m = M_(); $W = $sw - 2 * $m; $eqs = $ctx['equipments']; $n = count($eqs);
+    $base = null; foreach ($eqs as $e) if ($e['cmd_checks']) { $base = $e['cmd_checks']; break; }
+    $items = array_slice($base, $from, $lim);
+    $sp = $ctx['report']['type'] === 'special';
+    $y = k_section($s, $m, $y, $W, $from ? '상세 점검 항목 결과 (특별점검 추가 항목)' : ($sp ? '평시 점검 항목 결과 (특별점검 = 평시 + 상세)' : '평시 점검 항목 결과 (정기점검)'));
+    if ($n === 1) {
+        $rows = [['구분', '항목', '명령어', '결과', '확인 내용']]; $last = '';
+        foreach ($items as $c) { $rows[] = [($c['kind'] === 'detail' ? '상세 · ' : '') . ($c['group'] !== $last ? $c['group'] : ''), clip($c['point'], 30), clip($c['cmd'], 34), STATUS_TEXT[$c['status']] ?? '미수집', clip($c['summary'], 46)]; $last = $c['group']; }
+        return k_table($s, $m, $y, $W, $rows, ['col_w' => [1.3, 2.2, 2.4, 0.8, 3.1], 'size' => 6.5, 'row_h' => cm(0.4), 'status_col' => 3, 'align' => ['l', 'l', 'l', 'c', 'l']]) + cm(0.3);
+    }
+    $rows = [array_merge(['구분', '항목 (명령어)'], array_map(function ($e) { return '#' . $e['seq']; }, $eqs), ['확인 포인트'])]; $last = '';
+    foreach ($items as $i => $c) {
+        $r = [($c['kind'] === 'detail' ? '상세·' : '') . ($c['group'] !== $last ? $c['group'] : ''), clip($c['cmd'], 36)]; $last = $c['group'];
+        foreach ($eqs as $e) { $x = null; foreach ($e['cmd_checks'] as $cc) if ($cc['id'] === $c['id']) { $x = $cc; break; } $r[] = CK_MARK[$x['status'] ?? 'missing']; }
+        $r[] = clip($c['point'], 34); $rows[] = $r;
+    }
+    $tint = function ($r, $c, $v) use ($n) { if ($c < 2 || $c >= 2 + $n) return null; return ['✔' => C_GREEN, '!' => C_AMBER, '✖' => C_RED][$v] ?? C_GREY; };
+    $y = k_table($s, $m, $y, $W, $rows, ['col_w' => array_merge([1.4, 3.0], array_fill(0, $n, 0.5), [2.8]), 'size' => 6.5, 'row_h' => cm(0.38), 'label_cols' => [0],
+        'align' => array_merge(['l', 'l'], array_fill(0, $n, 'c'), ['l']), 'tint' => $tint]);
+    k_text($s, $m, $y + cm(0.05), $W, cm(0.4), '✔ 정상  ! 주의  ✖ 위험  i 참고  - 로그에 없음 (해당 명령어 출력을 로그에 포함해 주세요)', 6.5, false, C_GREY);
+    return $y + cm(0.55);
 }
 function p_sign($s, $ctx, $y, $sw) {
     $eng = $ctx['engineer'];
@@ -205,6 +231,48 @@ function p_system_compact($s, $ctx, $e, $y, $sw, $vl = 5, $fl = 3) {
     $y = k_table($s, $m, $y, $W, p_find_rows($e, $fl), ['col_w' => [0.8, 0.9, 4.2, 2.8], 'size' => 7, 'row_h' => cm(0.55), 'status_col' => 0, 'align' => ['c', 'c', 'l', 'l']]);
     return $y + cm(0.6);
 }
+/* 성능 세부 분석 (perf_archive) — 지표 표 + 해석. 성능 아카이브가 있는 장비만 */
+const PERF_GROUP_KO = ['cpu' => 'CPU', 'latency' => '지연시간', 'ops' => 'IOPS', 'throughput' => '처리량', 'disk' => '디스크', 'net' => '네트워크', 'other' => '기타'];
+function perf_num($v) { if ($v === null) return '-'; $a = abs($v); return $a >= 1000 ? number_format($v, 0) : ($a >= 10 ? number_format($v, 1) : number_format($v, 2)); }
+function p_perf($s, $ctx, $e, $y, $sw, $rowsLim = 10, $textLines = 14) {
+    $pf = $e['perf']; if (!$pf) return $y;
+    $m = M_(); $W = $sw - 2 * $m;
+    $y = k_section($s, $m, $y, $W, "성능 세부 분석 (Performance Archive) – System {$e['seq']}");
+    $per = ($pf['period']['from'] ?? '') ? ' · 수집 기간 ' . substr($pf['period']['from'], 0, 16) . ' ~ ' . substr($pf['period']['to'] ?? '', 0, 16) : '';
+    k_text($s, $m, $y - cm(0.05), $W - cm(3.2), cm(0.45), clip($pf['file'], 50) . " (업로드 {$pf['uploaded']})" . $per, 7.5, false, C_GREY);
+    $st = $pf['status'];
+    k_pill($s, $m + $W - cm(3.0), $y - cm(0.07), cm(3.0), cm(0.5), '성능 ' . STATUS_TEXT[$st], STATUS_COLOR[$st], C_WHITE, 8);
+    $y += cm(0.55);
+    $kpi = (array)$pf['kpi']; $ks = [];
+    if (isset($kpi['cpu'])) $ks[] = [perf_num($kpi['cpu']) . '%', 'CPU 평균(최대 노드)'];
+    if (isset($kpi['latency_ms'])) $ks[] = [perf_num($kpi['latency_ms']) . ' ms', '평균 지연(최대)'];
+    if (isset($kpi['ops'])) $ks[] = [perf_num($kpi['ops']), 'IOPS 평균(최대)'];
+    if (isset($kpi['disk_util'])) $ks[] = [perf_num($kpi['disk_util']) . '%', '디스크 사용률 평균'];
+    if ($ks) {
+        $kw = (int)(($W - cm(0.3) * (count($ks) - 1)) / count($ks));
+        foreach ($ks as $i => [$v, $l]) k_kpi($s, $m + $i * ($kw + cm(0.3)), $y, $kw, cm(1.45), $v, $l);
+        $y += cm(1.7);
+    }
+    $rows = [['구분', '오브젝트 : 카운터', '평균', '95%', '최대', '단위']];
+    foreach (array_slice($pf['metrics'], 0, $rowsLim) as $x) $rows[] = [PERF_GROUP_KO[$x['group']] ?? $x['group'], clip(($x['object'] ? $x['object'] . ' : ' : '') . $x['counter'], 46), perf_num($x['avg']), perf_num($x['p95']), perf_num($x['max']), $x['unit'] ?: '-'];
+    if (count($rows) === 1) $rows[] = ['-', '읽을 수 있는 지표 없음', '-', '-', '-', '-'];
+    $tw = (int)($W * 0.52); $gap = cm(0.3); $rw = $W - $tw - $gap;
+    $b = k_table($s, $m, $y, $tw, $rows, ['col_w' => [0.8, 3.2, 0.8, 0.8, 0.8, 0.6], 'size' => 6.5, 'row_h' => cm(0.42), 'align' => ['c', 'l', 'r', 'r', 'r', 'c']]);
+    $chars = (int)($rw / cm(0.27));
+    $box = max($b - $y, min(cm(0.36) * $textLines + cm(0.3), cm(0.36) * max(4, count(explode("\n", $pf['text']))) + cm(0.3)));
+    k_rect($s, $m + $tw + $gap, $y, $rw, $box, C_PALE, C_LINE);
+    k_rect($s, $m + $tw + $gap, $y, cm(0.12), $box, STATUS_COLOR[$st]);
+    k_text($s, $m + $tw + $gap + cm(0.25), $y + cm(0.1), $rw - cm(0.4), $box - cm(0.15), fit_lines($pf['text'], (int)(($box - cm(0.25)) / cm(0.36)), $chars), 7, false, C_INK, 'l', 't', 1.05);
+    return max($b, $y + $box) + cm(0.35);
+}
+/* 점검 매트릭스: cDOT 로그면 고객 점검 명령어 기준 결과표(평시 / 평시+상세), 아니면 기존 자동 매트릭스 */
+function flow_checks(&$F, $ctx, $sw) {
+    if (!has_cmd_checks($ctx)) { flow_put($F, function ($s, $y) use ($ctx, $sw) { return p_check_matrix($s, $ctx, $y, $sw); }); return; }
+    $base = null; foreach ($ctx['equipments'] as $e) if ($e['cmd_checks']) { $base = $e['cmd_checks']; break; }
+    $nb = count(array_filter($base, function ($c) { return $c['kind'] === 'base'; })); $nd = count($base) - $nb;
+    flow_put($F, function ($s, $y) use ($ctx, $sw, $nb) { return p_cmd_checks($s, $ctx, $y, $sw, 0, $nb); });
+    if ($nd) flow_put($F, function ($s, $y) use ($ctx, $sw, $nb, $nd) { return p_cmd_checks($s, $ctx, $y, $sw, $nb, $nd); });
+}
 function tag_findings($ctx) {
     $out = [];
     foreach ($ctx['equipments'] as $e) foreach ($e['analysis']['findings'] as $f) if ($f['severity'] !== 'info') { $f['_seq'] = $e['seq']; $out[] = $f; }
@@ -286,6 +354,7 @@ function build_inspection($ctx, $path) {
         $F['y'] = k_table($s, $m, $F['y'], $W, [['Model', "{$e['vendor']} {$e['model']}" . ($e['ha_type'] ? " ({$e['ha_type']})" : ''), 'System S/N', $e['serial']], ['OS Ver', $e['os_version'], 'Disk Type', $e['disk_info']]],
             ['col_w' => [1.2, 2.8, 1.2, 2.8], 'header' => false, 'label_cols' => [0, 2], 'size' => 8, 'row_h' => cm(0.55), 'align' => ['c', 'l', 'c', 'l']]) + cm(0.3);
         flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_detail($s, $ctx, $e, $y, $sw, 8, 5, 5); });
+        if (!empty($e['perf'])) { $F['title'] = '성능 세부 분석 (Performance)'; flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_perf($s, $ctx, $e, $y, $sw, 14, 22); }); }
         $F['title'] = '점검 결과 및 종합 의견';
     } else {
         $F['y'] = p_equipment_list($s, $ctx, $F['y'], $sw, $variant === 'fleet');
@@ -298,8 +367,9 @@ function build_inspection($ctx, $path) {
             if ($variant === 'multi') flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_compact($s, $ctx, $e, $y, $sw, 6, 5); }, cm(0.1));
             else flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_compact($s, $ctx, $e, $y, $sw); });
         }
+        foreach ($eqs as $e) if (!empty($e['perf'])) { $F['title'] = '성능 세부 분석 (Performance)'; flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_perf($s, $ctx, $e, $y, $sw, 8, 12); }); }
         $F['title'] = '종합 점검 결과 (Summary)';
-        flow_put($F, function ($s, $y) use ($ctx, $sw) { return p_check_matrix($s, $ctx, $y, $sw); });
+        flow_checks($F, $ctx, $sw);
     }
     if ($variant !== 'single') {
         $bt = $F['bottom'];
@@ -310,7 +380,7 @@ function build_inspection($ctx, $path) {
         $prs->save($path); return;
     }
     flow_put($F, function ($s, $y) use ($ctx, $eqs, $sw) { return p_visual_single($s, $ctx, $eqs[0], $y, $sw); });
-    flow_put($F, function ($s, $y) use ($ctx, $sw) { return p_check_matrix($s, $ctx, $y, $sw); });
+    flow_checks($F, $ctx, $sw);
     $op = $variant === 'single' ? "엔지니어 진단 의견 (Engineer's Opinion)" : "종합 엔지니어 의견 (Comprehensive Engineer's Opinion)";
     // 의견란은 남은 공간에 맞춰 늘거나 줄어듭니다. 최소 높이도 안 되면 새 페이지
     $need = measure_h($sw, $sh, function ($s, $y) use ($ctx, $sw, $op) { return p_opinion($s, $ctx, $y, $sw, cm(200), $op); });

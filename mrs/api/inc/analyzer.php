@@ -12,8 +12,8 @@ function old_ontap($v) {
     return preg_match('/(\d+)\.(\d+)/', $v, $m) && [(int)$m[1], (int)$m[2]] < [9, 8];
 }
 
-function analyze($eq, $p) {
-    $f = [];
+function analyze($eq, $p, $extra = []) {
+    $f = array_values((array)$extra); // 성능 아카이브 판정 등 외부 진단
     $add = function ($sev, $cat, $title, $detail, $rec) use (&$f) { $f[] = ['severity' => $sev, 'category' => $cat, 'title' => $title, 'detail' => $detail, 'recommendation' => $rec]; };
     foreach ($p['aggregates'] ?? [] as $a) {
         if (is_root_aggr($a['name'])) {
@@ -60,12 +60,53 @@ function analyze($eq, $p) {
     usort($f, function ($a, $b) { return SEV_ORDER[$a['severity']] <=> SEV_ORDER[$b['severity']]; });
     $cnt = ['critical' => 0, 'warning' => 0, 'info' => 0];
     foreach ($f as $x) $cnt[$x['severity']]++;
-    $score = max(0, 100 - $cnt['critical'] * 25 - $cnt['warning'] * 8);
+    // 점검 항목이 많아져도 점수가 0으로 몰리지 않도록 감점에 상한을 둡니다 (위험 최대 70, 주의 최대 30)
+    $score = max(0, 100 - ($cnt['critical'] ? min(70, 30 + 10 * ($cnt['critical'] - 1)) : 0) - min(30, $cnt['warning'] * 6));
     $status = $cnt['critical'] ? 'critical' : ($cnt['warning'] ? 'warning' : 'normal');
     $total = 0; $used = 0;
     foreach ($p['aggregates'] ?? [] as $a) if (!is_root_aggr($a['name'])) { $total += $a['total_gb']; $used += $a['used_gb']; }
     return ['findings' => $f, 'score' => $score, 'status' => $status, 'status_label' => STATUS_LONG[$status],
         'capacity' => ['total_gb' => $total, 'used_gb' => $used, 'pct' => $total ? (int)round($used / $total * 100) : 0], 'counts' => $cnt];
+}
+/* 로그에서 찾은 이상 중 육안으로도 보이는 것 → 육안 점검 항목 자동 '비정상' 제안 (엔지니어가 최종 확인) */
+function visual_hints($p, $an, $perf = null) {
+    $h = []; $add = function ($k, $why) use (&$h) { if (!isset($h[$k])) $h[$k] = mb_substr($why, 0, 120); };
+    $f = $p['disks']['failed'] ?? [];
+    if ($f) $add('hdd', 'Failed/Broken 디스크 ' . count($f) . 'EA (' . implode(', ', array_slice(array_column($f, 'disk'), 0, 3)) . ')');
+    $ck = (array)($p['cdot'] ?? []);
+    $bad = function ($id) use ($ck) { return isset($ck[$id]) && in_array($ck[$id]['status'], ['warning', 'critical'], true) ? $ck[$id]['summary'] : null; };
+    foreach (CDOT_CHECKS as $c) if (!empty($c['visual']) && ($w = $bad($c['id']))) {
+        if ($c['id'] === 'spare' || $c['id'] === 'unassigned') { $add('hdd', $w); continue; }
+        if (in_array($c['id'], ['volstate', 'df'], true)) { $add('volume', $w); continue; }
+        if ($c['id'] === 'lif' || $c['id'] === 'port') continue; // Down 포트는 미사용 포트일 수 있어 자동 체크하지 않음
+        $add($c['visual'], $w);
+    }
+    foreach ((array)($p['hw_hits'] ?? []) as $k => $lines) $add($k, '로그: ' . $lines[0]);
+    // 센서·알림 문구로 세부 부품 구분
+    foreach (['alert', 'sensor', 'health'] as $id) if (($w = $bad($id)) && isset($ck[$id])) {
+        $t = implode(' ', $ck[$id]['excerpt']);
+        if (preg_match('/psu|power supply/i', $t)) $add('psu', $w);
+        if (preg_match('/fan/i', $t)) $add('fan', $w);
+        if (preg_match('/battery|bbu/i', $t)) $add('battery', $w);
+        if (preg_match('/temp/i', $t) && preg_match('/(crit|warn)-(hi|lo)|failed/i', $t)) $add('fan', $w);
+    }
+    $ev = $p['events'] ?? [];
+    if (!empty($ev['panic']) || !empty($ev['emergency']) || !empty($ev['alert'])) $add('syslog', 'EMERGENCY/ALERT/Panic 이벤트');
+    elseif (!empty($ev['error'])) $add('syslog', "ERROR 이벤트 {$ev['error']}건");
+    foreach ($ev['top'] ?? [] as $e) {
+        $n = strtolower($e['event']);
+        if (preg_match('/psu|power/', $n)) $add('psu', "이벤트 {$e['event']}");
+        if (preg_match('/fan|temp|cooling/', $n)) $add('fan', "이벤트 {$e['event']}");
+        if (preg_match('/batt|nvram/', $n)) $add('battery', "이벤트 {$e['event']}");
+        if (preg_match('/sfp|transceiver/', $n)) $add('sfp', "이벤트 {$e['event']}");
+        if (preg_match('/shelf|sas|cable|path/', $n)) $add('cable', "이벤트 {$e['event']}");
+        if (preg_match('/disk|raid/', $n)) $add('hdd', "이벤트 {$e['event']}");
+    }
+    $ha = (array)($p['ha'] ?? []);
+    if (array_key_exists('takeover_possible', $ha) && $ha['takeover_possible'] === false) $add('controller', 'HA Takeover 불가');
+    foreach ($p['volumes'] ?? [] as $v) if ($v['pct'] >= 95 || ($v['state'] ?? 'online') !== 'online') { $add('volume', "볼륨 {$v['name']} " . (($v['state'] ?? 'online') !== 'online' ? $v['state'] : "{$v['pct']}%")); break; }
+    foreach ($perf['findings'] ?? [] as $x) if (preg_match('/Spare|디스크/u', $x['title'])) $add('hdd', '성능 아카이브: ' . $x['title']);
+    return $h;
 }
 function overall_status($per) {
     $st = array_column($per, 'status');

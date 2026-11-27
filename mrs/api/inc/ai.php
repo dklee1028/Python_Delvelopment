@@ -27,6 +27,8 @@ function ai_payload($type, $sub, $customer, $eqs, $extra) {
             'aggregates' => array_map(function ($x) { return array_intersect_key($x, array_flip(['node', 'name', 'pct', 'total_gb', 'avail_gb'])); }, array_slice($p['aggregates'] ?? [], 0, 10)),
             'top_volumes' => array_map(function ($x) { return array_intersect_key($x, array_flip(['name', 'pct', 'inode_pct'])); }, array_slice($p['volumes'] ?? [], 0, 10)),
             'failed_disks' => array_slice($p['disks']['failed'] ?? [], 0, 10), 'ha' => $p['ha'] ?? null, 'ports_down' => $p['ports_down'] ?? [], 'events' => $p['events'] ?? null,
+            'performance_archive' => empty($e['perf']) ? null : ['period' => $e['perf']['period'], 'kpi' => $e['perf']['kpi'], 'analysis_text' => mb_substr($e['perf']['text'], 0, 3000),
+                'metrics' => array_map(function ($m) { return array_intersect_key($m, array_flip(['group', 'object', 'counter', 'unit', 'avg', 'p95', 'max'])); }, array_slice($e['perf']['metrics'], 0, 20))],
         ];
     }
     return je(['report_type' => REPORT_TYPES[$type] ?? $type, 'work_type' => WORK_SUBTYPES[$sub] ?? '', 'customer' => $customer,
@@ -52,28 +54,35 @@ function ai_rule_based($eqs, $type = 'regular') {
     return implode("\n", $L);
 }
 
-function ai_generate($type, $sub, $customer, $eqs, $extra = '') {
+/* Claude Messages API 호출 (cURL). 성공 시 [text, model], 실패 시 예외 */
+function claude_call($system, $user, $maxTokens = 16000) {
     $key = conf('anthropic_key');
-    if (!$key) return ['text' => ai_rule_based($eqs, $type), 'model' => 'rule-based', 'fallback' => true, 'note' => 'Anthropic API 키가 설정되지 않아 규칙 기반 초안을 만들었습니다.'];
+    if (!$key) throw new Exception('Anthropic API 키가 설정되지 않았습니다.');
+    if (!function_exists('curl_init')) throw new Exception('PHP cURL 확장이 없습니다.');
+    $body = [
+        'model' => conf('ai_model') ?: 'claude-opus-5-5', 'max_tokens' => $maxTokens, 'system' => $system,
+        'output_config' => ['effort' => 'medium'], 'fallbacks' => 'default',
+        'messages' => [['role' => 'user', 'content' => $user]],
+    ];
+    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 170, CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'x-api-key: ' . $key, 'anthropic-version: 2026-10-21', 'anthropic-beta: server-side-fallback-2026-07-01'],
+        CURLOPT_POSTFIELDS => je($body)]);
+    $raw = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $cerr = curl_error($ch); curl_close($ch);
+    if ($raw === false) throw new Exception("연결 실패: $cerr");
+    $res = json_decode($raw, true);
+    if ($code >= 400 || !is_array($res)) throw new Exception('API 오류 ' . $code . ': ' . ($res['error']['message'] ?? mb_substr((string)$raw, 0, 200)));
+    if (($res['stop_reason'] ?? '') === 'refusal') throw new Exception('AI가 응답을 거절했습니다.');
+    $text = trim(implode("\n", array_column(array_filter($res['content'] ?? [], function ($b) { return ($b['type'] ?? '') === 'text'; }), 'text')));
+    if ($text === '') throw new Exception('빈 응답');
+    return [$text, $res['model'] ?? $body['model']];
+}
+
+function ai_generate($type, $sub, $customer, $eqs, $extra = '') {
+    if (!conf('anthropic_key')) return ['text' => ai_rule_based($eqs, $type), 'model' => 'rule-based', 'fallback' => true, 'note' => 'Anthropic API 키가 설정되지 않아 규칙 기반 초안을 만들었습니다.'];
     try {
-        if (!function_exists('curl_init')) throw new Exception('PHP cURL 확장이 없습니다.');
-        $body = [
-            'model' => conf('ai_model') ?: 'claude-opus-5-5', 'max_tokens' => 16000, 'system' => AI_SYSTEM_PROMPT,
-            'output_config' => ['effort' => 'medium'], 'fallbacks' => 'default',
-            'messages' => [['role' => 'user', 'content' => "다음 분석 데이터를 바탕으로 보고서용 장애 및 진단 의견을 작성해 주세요.\n\n" . ai_payload($type, $sub, $customer, $eqs, $extra)]],
-        ];
-        $ch = curl_init('https://api.anthropic.com/v1/messages');
-        curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 170, CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'x-api-key: ' . $key, 'anthropic-version: 2026-10-21', 'anthropic-beta: server-side-fallback-2026-07-01'],
-            CURLOPT_POSTFIELDS => je($body)]);
-        $raw = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); $cerr = curl_error($ch); curl_close($ch);
-        if ($raw === false) throw new Exception("연결 실패: $cerr");
-        $res = json_decode($raw, true);
-        if ($code >= 400 || !is_array($res)) throw new Exception('API 오류 ' . $code . ': ' . ($res['error']['message'] ?? mb_substr((string)$raw, 0, 200)));
-        if (($res['stop_reason'] ?? '') === 'refusal') throw new Exception('AI가 응답을 거절했습니다.');
-        $text = trim(implode("\n", array_column(array_filter($res['content'] ?? [], function ($b) { return ($b['type'] ?? '') === 'text'; }), 'text')));
-        if ($text === '') throw new Exception('빈 응답');
-        return ['text' => $text, 'model' => $res['model'] ?? $body['model'], 'fallback' => false, 'note' => ''];
+        [$text, $model] = claude_call(AI_SYSTEM_PROMPT, "다음 분석 데이터를 바탕으로 보고서용 장애 및 진단 의견을 작성해 주세요.\n\n" . ai_payload($type, $sub, $customer, $eqs, $extra));
+        return ['text' => $text, 'model' => $model, 'fallback' => false, 'note' => ''];
     } catch (Throwable $e) {
         error_log('MRS Claude 호출 실패: ' . $e->getMessage());
         return ['text' => ai_rule_based($eqs, $type), 'model' => 'rule-based', 'fallback' => true, 'note' => 'Claude 호출에 실패해 규칙 기반 초안을 만들었습니다: ' . $e->getMessage()];

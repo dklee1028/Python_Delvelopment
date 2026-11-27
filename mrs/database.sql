@@ -1,10 +1,11 @@
--- MRS 테이블 참고용 DDL (MariaDB, 스키마 v2). install.php 와 첫 접속 시 자동으로 만들고/추가하므로 직접 실행할 필요는 없습니다.
+-- MRS 테이블 참고용 DDL (MariaDB, 스키마 v3). install.php 와 첫 접속 시 자동으로 만들고/추가하므로 직접 실행할 필요는 없습니다.
 -- 기존 pms_ 테이블은 건드리지 않고 mrs_ 테이블만 추가합니다.
 -- v1 에서 올릴 때 자동으로 추가되는 열: mrs_equipment(disposed_at, dispose_note), mrs_log_file(status, n_crit, n_warn)
+-- v2 에서 올릴 때 자동으로 추가: mrs_user(leader_id), mrs_equipment(exclude_vols), mrs_report(include_perf), mrs_perf_archive 테이블
 
 CREATE TABLE IF NOT EXISTS mrs_user (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL UNIQUE, full_name VARCHAR(100), email VARCHAR(200), phone VARCHAR(50),
         title VARCHAR(50), password_hash VARCHAR(255) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'engineer', permissions TEXT, is_active INT NOT NULL DEFAULT 1,
-        must_change_pw INT NOT NULL DEFAULT 0, fail_count INT NOT NULL DEFAULT 0, locked_until VARCHAR(19), last_login_at VARCHAR(19), created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        leader_id INT, must_change_pw INT NOT NULL DEFAULT 0, fail_count INT NOT NULL DEFAULT 0, locked_until VARCHAR(19), last_login_at VARCHAR(19), created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS mrs_customer (id INT AUTO_INCREMENT PRIMARY KEY, legacy_customer_id VARCHAR(64), name VARCHAR(200) NOT NULL, address VARCHAR(500), site VARCHAR(200),
         memo TEXT, created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -14,11 +15,16 @@ CREATE TABLE IF NOT EXISTS mrs_customer_contact (id INT AUTO_INCREMENT PRIMARY K
 
 CREATE TABLE IF NOT EXISTS mrs_equipment (id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, name VARCHAR(100) NOT NULL, vendor VARCHAR(50), model VARCHAR(100), serial VARCHAR(200),
         os_version VARCHAR(100), ha_type VARCHAR(50), disk_info VARCHAR(200), location VARCHAR(200), contract_type VARCHAR(100), memo TEXT, is_active INT NOT NULL DEFAULT 1,
-        disposed_at VARCHAR(19), dispose_note VARCHAR(500), created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        disposed_at VARCHAR(19), dispose_note VARCHAR(500), exclude_vols VARCHAR(500), created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS mrs_log_file (id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, equipment_id INT, collected_at VARCHAR(19), original_name VARCHAR(300),
         stored_path VARCHAR(600), size_bytes INT NOT NULL DEFAULT 0, sha256 VARCHAR(64), parsed MEDIUMTEXT, note VARCHAR(500), uploaded_by INT,
         status VARCHAR(20), n_crit INT, n_warn INT, created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS mrs_perf_archive (id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, equipment_id INT NOT NULL, original_name VARCHAR(300), stored_path VARCHAR(600),
+        size_bytes BIGINT NOT NULL DEFAULT 0, received_bytes BIGINT NOT NULL DEFAULT 0, upload_token VARCHAR(64), status VARCHAR(20) NOT NULL DEFAULT 'uploading',
+        summary MEDIUMTEXT, analysis MEDIUMTEXT, ai_model VARCHAR(60), period_from VARCHAR(19), period_to VARCHAR(19), expires_at VARCHAR(19), keep_forever INT NOT NULL DEFAULT 0,
+        file_deleted_at VARCHAR(19), uploaded_by INT, created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS mrs_customer_assign (id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, user_id INT NOT NULL, kind VARCHAR(10) NOT NULL DEFAULT 'sub', created_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -28,7 +34,7 @@ CREATE TABLE IF NOT EXISTS mrs_report_template (id INT AUTO_INCREMENT PRIMARY KE
 CREATE TABLE IF NOT EXISTS mrs_report (id INT AUTO_INCREMENT PRIMARY KEY, report_no VARCHAR(40) NOT NULL UNIQUE, customer_id INT NOT NULL, report_type VARCHAR(30), work_subtype VARCHAR(30),
         template_id INT, title VARCHAR(300), variant VARCHAR(10), status VARCHAR(20) NOT NULL DEFAULT 'draft', inspection_date VARCHAR(20), service_codes TEXT,
         analysis MEDIUMTEXT, plan MEDIUMTEXT, ai_advice TEXT, ai_model VARCHAR(60), ai_generated_at VARCHAR(19), diagnosis TEXT, diagnosis_reviewed INT NOT NULL DEFAULT 0,
-        visual_inspection TEXT, final_comment TEXT, overall_status VARCHAR(20), engineer_id INT, created_by INT, completed_at VARCHAR(19), sent_at VARCHAR(19),
+        visual_inspection TEXT, final_comment TEXT, overall_status VARCHAR(20), engineer_id INT, include_perf INT NOT NULL DEFAULT 1, created_by INT, completed_at VARCHAR(19), sent_at VARCHAR(19),
         created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS mrs_report_equipment (id INT AUTO_INCREMENT PRIMARY KEY, report_id INT NOT NULL, equipment_id INT NOT NULL, seq INT NOT NULL DEFAULT 1) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -70,6 +76,8 @@ CREATE INDEX ix_mrs_rfile_r ON mrs_report_file (report_id);
 CREATE UNIQUE INDEX ux_mrs_assign ON mrs_customer_assign (customer_id, user_id);
 
 CREATE INDEX ix_mrs_assign_u ON mrs_customer_assign (user_id);
+
+CREATE INDEX ix_mrs_perf_e ON mrs_perf_archive (equipment_id);
 
 CREATE INDEX ix_mrs_mail_r ON mrs_mail_log (report_id);
 

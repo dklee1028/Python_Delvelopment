@@ -5,7 +5,7 @@
 date_default_timezone_set('Asia/Seoul');
 mb_internal_encoding('UTF-8');
 const MRS_VERSION = '1.0.0';
-const SCHEMA_V = '2';
+const SCHEMA_V = '3';
 
 function cfg() {
     static $c = false;
@@ -80,17 +80,22 @@ function schema_sql($driver) {
     $t = [];
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_user (id $pk, username VARCHAR(64) NOT NULL UNIQUE, full_name VARCHAR(100), email VARCHAR(200), phone VARCHAR(50),
         title VARCHAR(50), password_hash VARCHAR(255) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'engineer', permissions TEXT, is_active INT NOT NULL DEFAULT 1,
-        must_change_pw INT NOT NULL DEFAULT 0, fail_count INT NOT NULL DEFAULT 0, locked_until VARCHAR(19), last_login_at VARCHAR(19), created_at VARCHAR(19), updated_at VARCHAR(19))$end";
+        leader_id INT, must_change_pw INT NOT NULL DEFAULT 0, fail_count INT NOT NULL DEFAULT 0, locked_until VARCHAR(19), last_login_at VARCHAR(19), created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_customer (id $pk, legacy_customer_id VARCHAR(64), name VARCHAR(200) NOT NULL, address VARCHAR(500), site VARCHAR(200),
         memo TEXT, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_customer_contact (id $pk, customer_id INT NOT NULL, name VARCHAR(100) NOT NULL, department VARCHAR(100), position VARCHAR(100),
         email VARCHAR(200), phone VARCHAR(50), receive_reports INT NOT NULL DEFAULT 1, is_primary INT NOT NULL DEFAULT 0, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_equipment (id $pk, customer_id INT NOT NULL, name VARCHAR(100) NOT NULL, vendor VARCHAR(50), model VARCHAR(100), serial VARCHAR(200),
         os_version VARCHAR(100), ha_type VARCHAR(50), disk_info VARCHAR(200), location VARCHAR(200), contract_type VARCHAR(100), memo TEXT, is_active INT NOT NULL DEFAULT 1,
-        disposed_at VARCHAR(19), dispose_note VARCHAR(500), created_at VARCHAR(19), updated_at VARCHAR(19))$end";
+        disposed_at VARCHAR(19), dispose_note VARCHAR(500), exclude_vols VARCHAR(500), created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_log_file (id $pk, customer_id INT NOT NULL, equipment_id INT, collected_at VARCHAR(19), original_name VARCHAR(300),
         stored_path VARCHAR(600), size_bytes INT NOT NULL DEFAULT 0, sha256 VARCHAR(64), parsed $T, note VARCHAR(500), uploaded_by INT,
         status VARCHAR(20), n_crit INT, n_warn INT, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
+    // 성능 아카이브(perf_archive.7z): 원본은 보관 기한(기본 90일)이 지나면 자동 삭제, 분석 요약은 남김
+    $t[] = "CREATE TABLE IF NOT EXISTS mrs_perf_archive (id $pk, customer_id INT NOT NULL, equipment_id INT NOT NULL, original_name VARCHAR(300), stored_path VARCHAR(600),
+        size_bytes BIGINT NOT NULL DEFAULT 0, received_bytes BIGINT NOT NULL DEFAULT 0, upload_token VARCHAR(64), status VARCHAR(20) NOT NULL DEFAULT 'uploading',
+        summary $T, analysis $T, ai_model VARCHAR(60), period_from VARCHAR(19), period_to VARCHAR(19), expires_at VARCHAR(19), keep_forever INT NOT NULL DEFAULT 0,
+        file_deleted_at VARCHAR(19), uploaded_by INT, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     // 고객 담당 배정: kind = main(정) / sub(부). 자료는 고객에 붙어 있으므로 배정을 옮겨도 그대로 유지됩니다.
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_customer_assign (id $pk, customer_id INT NOT NULL, user_id INT NOT NULL, kind VARCHAR(10) NOT NULL DEFAULT 'sub', created_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_report_template (id $pk, name VARCHAR(200) NOT NULL, report_type VARCHAR(30), customer_id INT, file_format VARCHAR(10),
@@ -98,7 +103,7 @@ function schema_sql($driver) {
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_report (id $pk, report_no VARCHAR(40) NOT NULL UNIQUE, customer_id INT NOT NULL, report_type VARCHAR(30), work_subtype VARCHAR(30),
         template_id INT, title VARCHAR(300), variant VARCHAR(10), status VARCHAR(20) NOT NULL DEFAULT 'draft', inspection_date VARCHAR(20), service_codes TEXT,
         analysis $T, plan $T, ai_advice TEXT, ai_model VARCHAR(60), ai_generated_at VARCHAR(19), diagnosis TEXT, diagnosis_reviewed INT NOT NULL DEFAULT 0,
-        visual_inspection TEXT, final_comment TEXT, overall_status VARCHAR(20), engineer_id INT, created_by INT, completed_at VARCHAR(19), sent_at VARCHAR(19),
+        visual_inspection TEXT, final_comment TEXT, overall_status VARCHAR(20), engineer_id INT, include_perf INT NOT NULL DEFAULT 1, created_by INT, completed_at VARCHAR(19), sent_at VARCHAR(19),
         created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_report_equipment (id $pk, report_id INT NOT NULL, equipment_id INT NOT NULL, seq INT NOT NULL DEFAULT 1)$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_report_log (id $pk, report_id INT NOT NULL, log_id INT NOT NULL)$end";
@@ -113,14 +118,16 @@ function schema_sql($driver) {
         'ix_mrs_eq_c ON mrs_equipment (customer_id)', 'ix_mrs_log_c ON mrs_log_file (customer_id)', 'ix_mrs_log_e ON mrs_log_file (equipment_id)',
         'ix_mrs_log_at ON mrs_log_file (collected_at)', 'ix_mrs_rep_c ON mrs_report (customer_id)', 'ix_mrs_rep_st ON mrs_report (status)',
         'ux_mrs_rep_eq ON mrs_report_equipment (report_id, equipment_id)', 'ux_mrs_rep_log ON mrs_report_log (report_id, log_id)',
-        'ix_mrs_rfile_r ON mrs_report_file (report_id)', 'ux_mrs_assign ON mrs_customer_assign (customer_id, user_id)', 'ix_mrs_assign_u ON mrs_customer_assign (user_id)', 'ix_mrs_mail_r ON mrs_mail_log (report_id)', 'ix_mrs_audit_at ON mrs_audit_log (at)',
+        'ix_mrs_rfile_r ON mrs_report_file (report_id)', 'ux_mrs_assign ON mrs_customer_assign (customer_id, user_id)', 'ix_mrs_assign_u ON mrs_customer_assign (user_id)', 'ix_mrs_perf_e ON mrs_perf_archive (equipment_id)', 'ix_mrs_mail_r ON mrs_mail_log (report_id)', 'ix_mrs_audit_at ON mrs_audit_log (at)',
     ];
     foreach ($ix as $i) $t[] = (strpos($i, 'ux_') === 0 ? 'CREATE UNIQUE INDEX ' : 'CREATE INDEX ') . $i;
     return $t;
 }
 function install_schema($pdo, $driver) {
     // v1 → v2: 기존 테이블에 열 추가 (데이터는 그대로)
-    $add = ['mrs_equipment' => ['disposed_at' => 'VARCHAR(19)', 'dispose_note' => 'VARCHAR(500)'], 'mrs_log_file' => ['status' => 'VARCHAR(20)', 'n_crit' => 'INT', 'n_warn' => 'INT']];
+    // v2 → v3: 팀장(leader_id), 보고서 제외 볼륨, 성능 아카이브 포함 여부
+    $add = ['mrs_equipment' => ['disposed_at' => 'VARCHAR(19)', 'dispose_note' => 'VARCHAR(500)', 'exclude_vols' => 'VARCHAR(500)'], 'mrs_log_file' => ['status' => 'VARCHAR(20)', 'n_crit' => 'INT', 'n_warn' => 'INT'],
+        'mrs_user' => ['leader_id' => 'INT'], 'mrs_report' => ['include_perf' => 'INT NOT NULL DEFAULT 1']];
     foreach ($add as $tb => $cols) {
         if (!has_table($tb)) continue;
         $have = table_columns($tb);

@@ -21,12 +21,22 @@ function run_analysis($r) {
     $out = []; $per = [];
     foreach ($links as $eq) {
         $mine = array_values(array_filter($logs, function ($lg) use ($eq, $links) { return (int)$lg['equipment_id'] === (int)$eq['id'] || ($lg['equipment_id'] === null && count($links) === 1); }));
+        $auto = false;
+        if (!$mine) { // 이 장비 로그를 고르지 않았으면 점검일 기준 가장 최근 로그를 자동으로 씁니다
+            $lg = one("SELECT id, equipment_id, collected_at, parsed FROM mrs_log_file WHERE equipment_id=? AND collected_at<=? ORDER BY collected_at DESC, id DESC LIMIT 1", [$eq['id'], ($r['inspection_date'] ?: today()) . ' 23:59:59'])
+                ?: one("SELECT id, equipment_id, collected_at, parsed FROM mrs_log_file WHERE equipment_id=? ORDER BY collected_at DESC, id DESC LIMIT 1", [$eq['id']]);
+            if ($lg) { $mine = [$lg]; $auto = true; }
+        }
         $parsed = merge_parsed(array_map(function ($lg) { return jd($lg['parsed'], []); }, $mine));
+        $parsed = filter_volumes($parsed, (string)($eq['exclude_vols'] ?? ''));
+        $perf = (int)($r['include_perf'] ?? 1) ? perf_for_equipment($eq['id'], $r['inspection_date']) : null;
         $sys = (array)$parsed['system']; $fill = [];
         foreach (['model' => 'model', 'serial' => 'serial', 'os_version' => 'os_version'] as $col => $k) if (!$eq[$col] && !empty($sys[$k])) { $fill[$col] = mb_substr($sys[$k], 0, 100); $eq[$col] = $sys[$k]; }
         if ($fill) upd('mrs_equipment', $fill + ['updated_at' => now()], $eq['id']);
-        $a = analyze(['model' => $eq['model'], 'os_version' => $eq['os_version']], $parsed);
-        $out[(string)$eq['id']] = ['parsed' => $parsed, 'analysis' => $a, 'log_ids' => array_map(function ($l) { return (int)$l['id']; }, $mine)];
+        $extra = array_merge($perf['findings'] ?? [], ($parsed['os_mode'] ?? '') === 'cdot' ? cdot_findings((array)($parsed['cdot'] ?? []), $r['report_type']) : []);
+        $a = analyze(['model' => $eq['model'], 'os_version' => $eq['os_version']], $parsed, $extra);
+        $a['visual_hints'] = visual_hints($parsed, $a, $perf);
+        $out[(string)$eq['id']] = ['parsed' => $parsed, 'analysis' => $a, 'log_ids' => array_map(function ($l) { return (int)$l['id']; }, $mine), 'auto_logs' => $auto, 'perf' => $perf];
         $per[] = $a;
     }
     $st = $per ? overall_status($per) : 'normal';
@@ -34,6 +44,33 @@ function run_analysis($r) {
     return $out;
 }
 
+/* 보고서 볼륨 표에서 빼는 것: 루트 볼륨(vol0, *_root, MDV_*)과 장비에 적어 둔 제외 대상(SVM 이름·볼륨 이름·SVM:볼륨, * 사용 가능) */
+function is_root_vol($v) { return (bool)preg_match('/^(vol0|root|rootvol|vsroot|svm_?root)$|_root$|^root_|^MDV_|^vol0_/i', $v['name']); }
+function vol_excluded($v, $pats) {
+    foreach ($pats as $pt) {
+        $pt = strtolower($pt); $svm = strtolower((string)($v['node'] ?? '')); $n = strtolower($v['name']);
+        if (fnmatch($pt, $n) || ($svm !== '' && (fnmatch($pt, $svm) || fnmatch($pt, "$svm:$n")))) return true;
+    }
+    return false;
+}
+function filter_volumes($p, $excl) {
+    $pats = array_values(array_filter(array_map('trim', preg_split('/[,;\n]+/', $excl))));
+    $keep = []; $hidden = 0;
+    foreach ($p['volumes'] ?? [] as $v) { if (is_root_vol($v) || vol_excluded($v, $pats)) { $hidden++; continue; } $keep[] = $v; }
+    $p['volumes'] = $keep; $p['volumes_hidden'] = $hidden;
+    return $p;
+}
+/* 보고서에 넣을 점검 명령어 결과 (cDOT 로그일 때만). 정기 = 평시, 특별 = 평시 + 상세 */
+function cmd_check_rows($p, $type) {
+    if (($p['os_mode'] ?? '') !== 'cdot') return [];
+    $ck = (array)($p['cdot'] ?? []); $rows = [];
+    foreach (cdot_items_for($type === 'special' ? 'special' : 'regular') as $c) {
+        $r = $ck[$c['id']] ?? null;
+        $rows[] = ['id' => $c['id'], 'kind' => $c['kind'], 'group' => $c['group'], 'cmd' => $c['cmd'], 'point' => $c['point'],
+            'status' => $r ? $r['status'] : 'missing', 'summary' => $r ? $r['summary'] : '로그에 없음', 'excerpt' => $r['excerpt'] ?? []];
+    }
+    return $rows;
+}
 function engineer_of($r) {
     $u = $r['engineer_id'] ? one("SELECT full_name, title, phone, email FROM mrs_user WHERE id=?", [$r['engineer_id']]) : null;
     return ['name' => $u['full_name'] ?? '', 'title' => $u['title'] ?? '', 'phone' => $u['phone'] ?? '', 'email' => $u['email'] ?? ''];
@@ -53,7 +90,7 @@ function build_context($r) {
         $eqs[] = ['id' => (int)$e['id'], 'seq' => $seq, 'label' => "System $seq (" . ($e['model'] ?: $e['name']) . ')', 'name' => $e['name'], 'vendor' => $e['vendor'] ?: '',
             'model' => $e['model'] ?: '-', 'serial' => $e['serial'] ?: '-', 'os_version' => $e['os_version'] ?: '-', 'disk_info' => $e['disk_info'] ?: '-',
             'ha_type' => $e['ha_type'] ?: '', 'location' => $e['location'] ?: '', 'parsed' => $data['parsed'], 'analysis' => $data['analysis'],
-            'visual' => $vis[(string)$e['id']] ?? [], 'checks' => auto_checks($data['parsed'], $data['analysis'], $e['os_version'] ?: '')];
+            'visual' => $vis[(string)$e['id']] ?? [], 'perf' => $data['perf'] ?? null, 'cmd_checks' => cmd_check_rows($data['parsed'], $r['report_type']), 'checks' => auto_checks($data['parsed'], $data['analysis'], $e['os_version'] ?: '')];
     }
     $st = $r['overall_status'] ?: 'normal'; $plan = jd($r['plan'], []);
     if (!empty($plan['steps'])) $plan['steps'] = number_steps($plan['steps']);
