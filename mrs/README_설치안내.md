@@ -1,6 +1,6 @@
 # MRS 설치 안내 (PHP 웹호스팅용)
 
-PMS 파트관리시스템과 같은 웹호스팅(PHP + MariaDB)에 올려 `https://www.datanex.io.kr/rms` 로 접속하는 버전입니다.
+PMS 파트관리시스템과 같은 웹호스팅(PHP + MariaDB)에 올려 `https://www.datanex.io.kr/mrs` 로 접속하는 버전입니다.
 Python·composer 가 필요 없고, FTP 로 올린 뒤 설치 화면에서 DB 정보만 입력하면 됩니다.
 
 ## 1. 서버 요구 사항
@@ -10,11 +10,11 @@ Python·composer 가 필요 없고, FTP 로 올린 뒤 설치 화면에서 DB �
 - 대용량 로그를 올리려면 `upload_max_filesize`, `post_max_size` 를 50M 이상으로 늘려 주세요.
 
 ## 2. 올리기
-1. 이 `rms` 폴더 전체를 FTP 로 `www/rms/` 에 올립니다.
-2. `rms` 폴더에 쓰기 권한(705 또는 755)이 있는지 확인합니다. 설치 시 `config.php` 와 `data/` 폴더를 만듭니다.
+1. 이 `mrs` 폴더 전체를 FTP 로 `www/mrs/` 에 올립니다.
+2. `mrs` 폴더에 쓰기 권한(705 또는 755)이 있는지 확인합니다. 설치 시 `config.php` 와 `data/` 폴더를 만듭니다.
 
 ## 3. 설치
-1. 브라우저에서 `https://www.datanex.io.kr/rms/install.php` 를 엽니다.
+1. 브라우저에서 `https://www.datanex.io.kr/mrs/install.php` 를 엽니다.
 2. 서버 환경 점검이 모두 "정상"인지 확인합니다.
 3. DB 정보(호스트·포트·DB 이름 `datanex8`·사용자 `datanex8`·비밀번호)와 최초 관리자 계정을 입력하고 **설치 시작**을 누릅니다.
    - 기존 `pms_` 테이블은 건드리지 않고 `mrs_` 로 시작하는 테이블 13개만 추가합니다. (참고용 DDL: `database.sql`)
@@ -41,4 +41,4 @@ Chrome/Edge 에서 접속 후 상단 **[내 PC에 MRS 설치]** 를 누르면 �
 
 ## 8. 백업
 - DB: `mrs_` 테이블 (PMS 백업과 함께 덤프)
-- 파일: `rms/data/` 폴더 (업로드 로그, 생성된 보고서, 고객 양식)
+- 파일: `mrs/data/` 폴더 (업로드 로그, 생성된 보고서, 고객 양식)
