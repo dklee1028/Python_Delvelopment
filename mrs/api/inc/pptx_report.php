@@ -211,8 +211,7 @@ function p_system_detail($s, $ctx, $e, $y, $sw, $vl = 10, $al = 6, $fl = 5) {
         k_bars($s, $m + $tw + cm(0.3), $y, $W - $tw - cm(0.3), $ch, array_column($aggs, 'name'), array_column($aggs, 'pct'));
         $y = max($b, $y + $ch) + cm(0.3);
     } else $y = k_table($s, $m, $y, $W, p_aggr_rows($e, $al), $ao) + cm(0.3);
-    $y = k_section($s, $m, $y, $W, "주요 볼륨 현황 (Top $vl Volumes)");
-    $y = k_table($s, $m, $y, $W, p_vol_rows($e, $vl), ['col_w' => [1.2, 1.8, 1.0, 1.0, 0.8, 0.8, 1.0], 'size' => 7.5, 'row_h' => cm(0.5), 'status_col' => 6]) + cm(0.3);
+    // 1대 보고서에는 SVM 볼륨 현황 표를 넣지 않습니다 (요청 사항). 볼륨 상세는 엑셀 보고서에 있습니다.
     $y = k_section($s, $m, $y, $W, '로그 분석 진단 (Diagnostic Findings)');
     return k_table($s, $m, $y, $W, p_find_rows($e, $fl), ['col_w' => [0.8, 0.9, 4.2, 2.8], 'size' => 7.5, 'row_h' => cm(0.62), 'status_col' => 0, 'align' => ['c', 'c', 'l', 'l']]) + cm(0.3);
 }
@@ -253,11 +252,22 @@ function p_perf($s, $ctx, $e, $y, $sw, $rowsLim = 10, $textLines = 14) {
         foreach ($ks as $i => [$v, $l]) k_kpi($s, $m + $i * ($kw + cm(0.3)), $y, $kw, cm(1.45), $v, $l);
         $y += cm(1.7);
     }
-    $rows = [['구분', '오브젝트 : 카운터', '평균', '95%', '최대', '단위']];
-    foreach (array_slice($pf['metrics'], 0, $rowsLim) as $x) $rows[] = [PERF_GROUP_KO[$x['group']] ?? $x['group'], clip(($x['object'] ? $x['object'] . ' : ' : '') . $x['counter'], 46), perf_num($x['avg']), perf_num($x['p95']), perf_num($x['max']), $x['unit'] ?: '-'];
-    if (count($rows) === 1) $rows[] = ['-', '읽을 수 있는 지표 없음', '-', '-', '-', '-'];
     $tw = (int)($W * 0.52); $gap = cm(0.3); $rw = $W - $tw - $gap;
-    $b = k_table($s, $m, $y, $tw, $rows, ['col_w' => [0.8, 3.2, 0.8, 0.8, 0.8, 0.6], 'size' => 6.5, 'row_h' => cm(0.42), 'align' => ['c', 'l', 'r', 'r', 'r', 'c']]);
+    if ($pf['metrics']) {
+        $rows = [['구분', '오브젝트 : 카운터', '평균', '95%', '최대', '단위']];
+        foreach (array_slice($pf['metrics'], 0, $rowsLim) as $x) $rows[] = [PERF_GROUP_KO[$x['group']] ?? $x['group'], clip(($x['object'] ? $x['object'] . ' : ' : '') . $x['counter'], 46), perf_num($x['avg']), perf_num($x['p95']), perf_num($x['max']), $x['unit'] ?: '-'];
+        $b = k_table($s, $m, $y, $tw, $rows, ['col_w' => [0.8, 3.2, 0.8, 0.8, 0.8, 0.6], 'size' => 6.5, 'row_h' => cm(0.42), 'align' => ['c', 'l', 'r', 'r', 'r', 'c']]);
+    } else {
+        // 카운터 값이 없는 아카이브: 함께 들어 있는 AutoSupport 시스템 정보로 점검표를 만듭니다
+        $rows = [['점검 항목', '아카이브에서 확인한 내용', '결과']];
+        foreach (perf_system_rows($pf) as [$k, $v, $st2]) $rows[] = [$k, clip($v, 60), ['normal' => '정상', 'warning' => '요주의', 'critical' => '위험', 'info' => '참고'][$st2]];
+        $b = k_table($s, $m, $y, $tw, $rows, ['col_w' => [1.1, 3.4, 0.7], 'size' => 6.8, 'row_h' => cm(0.46), 'align' => ['l', 'l', 'c'], 'status_col' => 2]);
+    }
+    if ($pf['findings']) {
+        $fr = [['등급', '성능 아카이브 진단', '권고 조치']];
+        foreach (array_slice($pf['findings'], 0, 6) as $f) $fr[] = [STATUS_TEXT[$f['severity']] ?? $f['severity'], clip($f['title'] . ($f['detail'] ? ' – ' . $f['detail'] : ''), 70), clip($f['recommendation'], 50)];
+        $b = k_table($s, $m, $b + cm(0.2), $tw, $fr, ['col_w' => [0.85, 2.7, 1.75], 'size' => 6.5, 'row_h' => cm(0.5), 'status_col' => 0, 'align' => ['c', 'l', 'l']]);
+    }
     $chars = (int)($rw / cm(0.27));
     $box = max($b - $y, min(cm(0.36) * $textLines + cm(0.3), cm(0.36) * max(4, count(explode("\n", $pf['text']))) + cm(0.3)));
     k_rect($s, $m + $tw + $gap, $y, $rw, $box, C_PALE, C_LINE);

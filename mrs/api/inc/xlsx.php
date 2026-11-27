@@ -221,10 +221,17 @@ function x_perf($x, $ctx, $e) {
     $per = ($pf['period']['from'] ?? '') ? ' · 기간 ' . $pf['period']['from'] . ' ~ ' . ($pf['period']['to'] ?? '') : '';
     $r = x_title($x, $ws, "System {$e['seq']} 성능 세부 분석 (Performance Archive)", $pf['file'] . " · 업로드 {$pf['uploaded']}$per · 판정 " . STATUS_TEXT[$pf['status']], 7);
     $ws->widths = [1 => 12, 22, 34, 12, 12, 12, 10];
-    $r = x_section($x, $ws, $r, '주요 지표');
-    $rows = [['구분', '오브젝트', '카운터', '평균', '95%', '최대', '단위']];
-    foreach ($pf['metrics'] as $m) $rows[] = [PERF_GROUP_KO[$m['group']] ?? $m['group'], $m['object'], $m['counter'], $m['avg'], $m['p95'], $m['max'], $m['unit']];
-    $r = x_table($x, $ws, $r, $rows);
+    if ($sr = perf_system_rows($pf)) {
+        $r = x_section($x, $ws, $r, '시스템 점검 (아카이브의 AutoSupport 정보)');
+        $rows = [['점검 항목', '확인 내용', '결과']]; foreach ($sr as [$k, $v, $st2]) $rows[] = [$k, $v, ['normal' => '정상', 'warning' => '요주의', 'critical' => '위험', 'info' => '참고'][$st2]];
+        $r = x_table($x, $ws, $r, $rows);
+    }
+    if ($pf['metrics']) {
+        $r = x_section($x, $ws, $r, '주요 지표');
+        $rows = [['구분', '오브젝트', '카운터', '평균', '95%', '최대', '단위']];
+        foreach ($pf['metrics'] as $m) $rows[] = [PERF_GROUP_KO[$m['group']] ?? $m['group'], $m['object'], $m['counter'], $m['avg'], $m['p95'], $m['max'], $m['unit']];
+        $r = x_table($x, $ws, $r, $rows);
+    }
     if ($pf['findings']) {
         $r = x_section($x, $ws, $r, '성능 진단');
         $rows = [['등급', '진단', '상세', '권고 조치']]; foreach ($pf['findings'] as $f) $rows[] = [STATUS_TEXT[$f['severity']], $f['title'], $f['detail'], $f['recommendation']];

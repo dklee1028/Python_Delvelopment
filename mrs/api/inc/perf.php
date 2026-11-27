@@ -185,12 +185,29 @@ function perf_analyze($id, $useAi = true) {
 /* 보고서에 넣을 장비별 최신 성능 분석 (점검일 기준 120일 이내) */
 function perf_for_equipment($eid, $date) {
     $to = date('Y-m-d 23:59:59', strtotime($date ?: today()) ?: time()); $from = date('Y-m-d H:i:s', strtotime($to) - 120 * 86400);
-    $r = one("SELECT * FROM mrs_perf_archive WHERE equipment_id=? AND status='done' AND created_at BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 1", [(int)$eid, $from, $to]);
+    $r = one("SELECT * FROM mrs_perf_archive WHERE equipment_id=? AND status IN ('done','unreadable') AND created_at BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 1", [(int)$eid, $from, $to]);
     if (!$r) return null;
     $sum = jd($r['summary'], []); $an = jd($r['analysis'], []);
     $order = ['cpu' => 0, 'latency' => 1, 'ops' => 2, 'throughput' => 3, 'disk' => 4, 'net' => 5];
     $ms = $sum['metrics'] ?? [];
     usort($ms, function ($a, $b) use ($order) { return [($order[$a['group']] ?? 9)] <=> [($order[$b['group']] ?? 9)]; });
     return ['id' => (int)$r['id'], 'file' => $r['original_name'], 'uploaded' => substr($r['created_at'], 0, 10), 'period' => $sum['period'] ?? [], 'status' => $an['status'] ?? 'normal',
-        'findings' => $an['findings'] ?? [], 'kpi' => $an['kpi'] ?? [], 'text' => $an['text'] ?? '', 'model' => $r['ai_model'] ?: '', 'metrics' => array_slice($ms, 0, 40)];
+        'findings' => $an['findings'] ?? [], 'kpi' => $an['kpi'] ?? [], 'text' => ($an['text'] ?? '') ?: ($sum['note'] ?? ''), 'model' => $r['ai_model'] ?: '', 'metrics' => array_slice($ms, 0, 40),
+        'asup' => $sum['asup'] ?? null, 'note' => $sum['note'] ?? '', 'files_total' => (int)($sum['files_total'] ?? 0)];
+}
+/* 성능 카운터가 없을 때 보고서에 넣을 시스템 점검표 (AutoSupport 패키지 내용) */
+function perf_system_rows($pf) {
+    $a = $pf['asup'] ?? null; $rows = [];
+    if ($a) {
+        if ($a['hostname'] || $a['model']) $rows[] = ['시스템', trim($a['hostname'] . ' / ' . $a['model'] . ($a['serial'] ? ' / S/N ' . $a['serial'] : ''), ' /'), 'info'];
+        if ($a['os']) $rows[] = ['ONTAP 버전', mb_substr(preg_replace('/^NetApp Release /', '', $a['os']), 0, 40), 'info'];
+        $h = (array)($a['history'] ?? []); $fail = (int)($h['transmission-failed'] ?? 0) + (int)($h['collection-failed'] ?? 0);
+        if ($h) $rows[] = ['AutoSupport 이력', '성공 ' . (int)($h['sent-successful'] ?? 0) . '건 · 전송 실패 ' . (int)($h['transmission-failed'] ?? 0) . '건 · 수집 실패 ' . (int)($h['collection-failed'] ?? 0) . '건', $fail ? 'warning' : 'normal'];
+        if ($a['spare'] !== null) $rows[] = ['Spare 디스크', $a['spare'] ? $a['spare'] . 'EA' : '없음', $a['spare'] ? 'normal' : 'warning'];
+        $rows[] = ['Failed 디스크', $a['failed_disks'] ? count($a['failed_disks']) . 'EA (' . implode(', ', array_slice($a['failed_disks'], 0, 3)) . ')' : '없음', $a['failed_disks'] ? 'critical' : 'normal'];
+        $rows[] = ['Orphaned 디스크', $a['orphaned'] ? $a['orphaned'] . 'EA' : '없음', $a['orphaned'] ? 'warning' : 'normal'];
+        $rows[] = ['Aggregate / RAID', $a['raid_bad'] ? implode(', ', array_slice($a['raid_bad'], 0, 3)) : '정상', $a['raid_bad'] ? 'critical' : 'normal'];
+        $rows[] = ['성능 카운터', $pf['metrics'] ? count($pf['metrics']) . '개 지표' : '값 없음 (카운터 정의 ' . (int)$a['presets'] . '개만 포함)', $pf['metrics'] ? 'normal' : 'info'];
+    } elseif (!$pf['metrics']) $rows[] = ['성능 카운터', $pf['note'] ?: '읽을 수 있는 지표 없음', 'info'];
+    return $rows;
 }
