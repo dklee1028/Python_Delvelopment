@@ -7,7 +7,7 @@ import ssl
 from email.message import EmailMessage
 from pathlib import Path
 
-from ..config import settings
+from .. import runtime_settings
 
 
 class MailNotConfigured(RuntimeError):
@@ -16,10 +16,11 @@ class MailNotConfigured(RuntimeError):
 
 def send(to: list[str], cc: list[str], subject: str, body_text: str, body_html: str, attachments: list[tuple[str, str]]) -> None:
     """attachments: [(표시 파일명, 로컬 경로)]"""
+    settings = runtime_settings.current()
     if not settings.smtp_host:
-        raise MailNotConfigured("SMTP 설정(MRS_SMTP_HOST 등)이 없어 메일을 보낼 수 없습니다.")
+        raise MailNotConfigured("SMTP 설정이 없어 메일을 보낼 수 없습니다. [시스템 설정]에서 SMTP 계정을 등록해 주세요.")
     msg = EmailMessage()
-    msg["From"] = settings.mail_from
+    msg["From"] = settings.mail_from or settings.smtp_user
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)

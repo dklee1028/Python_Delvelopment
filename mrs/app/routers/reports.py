@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from .. import runtime_settings
 from ..auth import audit, require
 from ..config import settings
 from ..db import get_db
@@ -34,11 +35,12 @@ STATUS_KO = {"draft": "작성 중", "review": "검토 중", "completed": "완료
 
 @router.get("/catalog")
 def catalog(_: User = Depends(require("report.view"))):
+    cfg = runtime_settings.current()
     return {
         "report_types": REPORT_TYPES, "work_subtypes": WORK_SUBTYPES, "service_codes": SERVICE_CODES,
         "visual_items": VISUAL_ITEMS, "visual_choices": VISUAL_CHOICES, "default_steps": DEFAULT_STEPS,
         "default_rollback": DEFAULT_ROLLBACK, "status": STATUS_KO, "variants": report_service.VARIANT_LABEL,
-        "ai_enabled": bool(settings.anthropic_key), "mail_enabled": bool(settings.smtp_host),
+        "ai_enabled": bool(cfg.anthropic_key), "mail_enabled": bool(cfg.smtp_host),
     }
 
 
@@ -354,8 +356,9 @@ def send(rid: int, body: SendIn, db: Session = Depends(get_db), me: User = Depen
     if not to:
         raise HTTPException(400, "받는 사람을 입력하세요.")
     files = [f for f in r.files if not body.file_ids or f.id in body.file_ids]
-    subject = body.subject or f"[{settings.company_name}] {r.title} ({r.inspection_date})"
-    msg = body.message or f"안녕하세요, {settings.company_name}입니다.\n\n{r.title}를 첨부와 같이 송부드립니다.\n검토 부탁드립니다.\n\n감사합니다."
+    company = runtime_settings.current().company_name
+    subject = body.subject or f"[{company}] {r.title} ({r.inspection_date})"
+    msg = body.message or f"안녕하세요, {company}입니다.\n\n{r.title}를 첨부와 같이 송부드립니다.\n검토 부탁드립니다.\n\n감사합니다."
     html_body = (
         "<div style=\"font-family:'Malgun Gothic',sans-serif;font-size:14px;color:#1f2937\">"
         "<div style='background:#0B2E4F;color:#fff;padding:16px 20px;font-size:18px;font-weight:700'>"

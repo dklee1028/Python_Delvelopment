@@ -32,11 +32,12 @@ PERMISSIONS: dict[str, str] = {
     "report.send": "보고서 메일 발송",
     "template.manage": "고객 양식 관리",
     "user.manage": "사용자·권한 관리",
+    "settings.manage": "시스템 설정(SMTP·회사정보·AI 키)",
 }
 
 ROLE_DEFAULTS: dict[str, set[str]] = {
     "admin": set(PERMISSIONS),
-    "manager": set(PERMISSIONS) - {"user.manage"},
+    "manager": set(PERMISSIONS) - {"user.manage", "settings.manage"},
     "engineer": {
         "customer.view", "customer.edit", "equipment.edit", "log.upload",
         "report.view", "report.create", "report.edit", "report.send",

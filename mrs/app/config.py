@@ -29,7 +29,7 @@ def _b(name: str, default: bool) -> bool:
 @dataclass
 class Settings:
     db_url: str = field(default_factory=lambda: os.environ.get("MRS_DB_URL", "sqlite:///./data/mrs_dev.db"))
-    legacy_table: str = field(default_factory=lambda: os.environ.get("MRS_LEGACY_CUSTOMER_TABLE", ""))
+    legacy_table: str = field(default_factory=lambda: os.environ.get("MRS_LEGACY_CUSTOMER_TABLE", "pms_customers"))
     legacy_id_col: str = field(default_factory=lambda: os.environ.get("MRS_LEGACY_CUSTOMER_ID_COL", "id"))
     legacy_name_col: str = field(default_factory=lambda: os.environ.get("MRS_LEGACY_CUSTOMER_NAME_COL", "name"))
     legacy_addr_col: str = field(default_factory=lambda: os.environ.get("MRS_LEGACY_CUSTOMER_ADDR_COL", "address"))
@@ -48,7 +48,7 @@ class Settings:
     smtp_starttls: bool = field(default_factory=lambda: _b("MRS_SMTP_STARTTLS", True))
     mail_from: str = field(default_factory=lambda: os.environ.get("MRS_MAIL_FROM", "MRS <noreply@datanex.io.kr>"))
     company_name: str = field(default_factory=lambda: os.environ.get("MRS_COMPANY_NAME", "(주)데이터넥스"))
-    company_address: str = field(default_factory=lambda: os.environ.get("MRS_COMPANY_ADDRESS", ""))
+    company_address: str = field(default_factory=lambda: os.environ.get("MRS_COMPANY_ADDRESS", "서울시 구로구 디지털로34길 55 코오롱싸이언스밸리2차 1205호"))
     company_tel: str = field(default_factory=lambda: os.environ.get("MRS_COMPANY_TEL", ""))
     company_email: str = field(default_factory=lambda: os.environ.get("MRS_COMPANY_EMAIL", ""))
 

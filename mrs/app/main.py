@@ -15,7 +15,7 @@ from . import __version__
 from .auth import ensure_admin
 from .config import settings
 from .db import SessionLocal, init_db
-from .routers import auth_users, customers, logs, reports, templates
+from .routers import auth_users, customers, logs, reports, settings as settings_router, templates
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -23,7 +23,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 def create_mrs() -> FastAPI:
     mrs = FastAPI(title="MRS - Management Report System", version=__version__, docs_url="/api/docs",
                   openapi_url="/api/openapi.json")
-    for r in (auth_users.router, customers.router, logs.router, templates.router, reports.router):
+    for r in (auth_users.router, customers.router, logs.router, templates.router, reports.router, settings_router.router):
         mrs.include_router(r)
 
     @mrs.get("/api/health")

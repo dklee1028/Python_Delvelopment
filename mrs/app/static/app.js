@@ -89,6 +89,7 @@ const I = {
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11a3 3 0 1 0 0-6M22 21c0-3-2-5-5-5.5"/></svg>',
   server: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
   tpl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>',
 };
 
@@ -101,6 +102,7 @@ const ROUTES = [
   ["logs", "장비 · 로그 보관함", I.server, "customer.view"],
   ["templates", "고객 양식", I.tpl, "report.view"],
   ["users", "사용자 · 권한", I.shield, "report.view"],
+  ["settings", "시스템 설정", I.gear, "settings.manage"],
 ];
 let deferredInstall = null;
 addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredInstall = e; const b = $("#install-btn"); if (b) b.hidden = false; });
@@ -159,7 +161,7 @@ async function route() {
   view.innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton"></div><div class="skeleton" style="width:70%"></div>';
   view.style.animation = "none"; void view.offsetWidth; view.style.animation = "";
   if (!S.catalog) S.catalog = await api("catalog").catch(() => null);
-  const pages = { dashboard: pageDashboard, new: pageNew, reports: pageReports, report: pageReport, customers: pageCustomers, logs: pageLogs, templates: pageTemplates, users: pageUsers };
+  const pages = { dashboard: pageDashboard, new: pageNew, reports: pageReports, report: pageReport, customers: pageCustomers, logs: pageLogs, templates: pageTemplates, users: pageUsers, settings: pageSettings };
   const title = { report: "보고서 상세" }[r] || (ROUTES.find((x) => x[0] === r) || [, "MRS"])[1];
   $("#page-title").textContent = title;
   try { await (pages[r] || pageDashboard)(view, arg); animate(view); } catch (e) { view.innerHTML = `<div class="missing">${esc(e.message)}</div>`; }
@@ -701,6 +703,7 @@ async function pageUsers(v) {
       <div><label class="f">비밀번호 ${u ? "(변경 시에만)" : '<span class="req">*</span>'}</label><input type="password" id="up"></div>
       <div><label class="f">이름</label><input type="text" id="uf" value="${esc(u?.full_name || "")}"></div><div><label class="f">직급</label><input type="text" id="ut" value="${esc(u?.title || "")}"></div>
       <div><label class="f">이메일</label><input type="email" id="ue" value="${esc(u?.email || "")}"></div><div><label class="f">연락처</label><input type="text" id="uph" value="${esc(u?.phone || "")}"></div>
+      <p class="small muted" style="grid-column:1/-1;margin:0">이 사용자가 담당 엔지니어인 보고서에는 위 연락처와 이메일이 회사 연락처로 표시됩니다.</p>
       <div><label class="f">역할</label><select id="ur">${Object.entries(cat.roles).map(([k, l]) => `<option value="${k}" ${(u?.role || "engineer") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="row" style="margin-top:28px"><input type="checkbox" id="ua" ${u?.is_active !== false ? "checked" : ""}> 활성</label></div></div>
       <label class="f">세부 권한 (역할 기본값에서 개별 조정)</label><div class="perm-grid" id="pg"></div>
@@ -723,6 +726,44 @@ async function pageUsers(v) {
     const logs = await api("audit?limit=50");
     $("#audit").innerHTML = `<table class="t"><thead><tr><th>시각</th><th>사용자</th><th>작업</th><th>대상</th></tr></thead><tbody>${logs.map((l) => `<tr><td class="small muted">${esc(l.at.replace("T", " ").slice(0, 16))}</td><td>${esc(l.user)}</td><td class="mono small">${esc(l.action)}</td><td class="small">${esc(l.target)} ${esc(l.detail).slice(0, 80)}</td></tr>`).join("")}</tbody></table>`;
   }
+}
+
+// ───────────────────────── 시스템 설정 ─────────────────────────
+async function pageSettings(v) {
+  const { items } = await api("settings");
+  const groups = [
+    ["회사 정보", ["company_name", "company_address"]],
+    ["메일 발송 (SMTP)", ["smtp_host", "smtp_port", "smtp_starttls", "smtp_user", "smtp_password", "mail_from"]],
+    ["Claude AI", ["anthropic_key", "ai_model"]],
+  ];
+  const by = Object.fromEntries(items.map((x) => [x.key, x]));
+  const field = (x) => {
+    if (x.kind === "bool") return `<div><label class="row" style="margin-top:28px"><input type="checkbox" data-k="${x.key}" ${x.value ? "checked" : ""}> ${esc(x.label)}</label></div>`;
+    const ph = x.secret ? (x.is_set ? `저장됨 ${x.masked} (바꿀 때만 입력)` : "미설정") : "";
+    const type = x.kind === "password" ? "password" : x.kind === "number" ? "number" : "text";
+    return `<div><label class="f">${esc(x.label)}</label><input type="${type}" data-k="${x.key}" value="${x.secret ? "" : esc(x.value)}" placeholder="${esc(ph)}" autocomplete="off">
+      ${x.secret && x.is_set && x.source === "db" ? `<label class="small row" style="margin-top:4px"><input type="checkbox" data-clear="${x.key}"> 저장된 값 지우기</label>` : ""}</div>`;
+  };
+  const note = {
+    "회사 정보": "보고서의 연락처와 이메일은 담당 엔지니어의 사용자 정보(사용자 · 권한)에서 가져옵니다.",
+    "메일 발송 (SMTP)": "포트 465는 SSL, 587은 STARTTLS를 씁니다. 보내는 사람을 비우면 SMTP 계정 주소로 보냅니다.",
+    "Claude AI": "API 키는 Claude Console(platform.claude.com) → API Keys에서 발급합니다. 사용한 만큼 과금되며 결제 수단 등록이 필요합니다. 키가 없으면 규칙 기반 초안으로 대신 작성합니다.",
+  };
+  v.innerHTML = groups.map(([t, ks]) => `<div class="card" style="margin-bottom:16px"><h3>${t}</h3><div class="grid g2">${ks.map((k) => field(by[k])).join("")}</div>
+    <p class="small muted" style="margin-top:10px">${note[t]}</p>
+    ${t.startsWith("메일") ? `<div class="row" style="margin-top:8px"><input type="email" id="tm-to" placeholder="테스트 받을 주소" value="${esc(S.me.email || "")}" style="max-width:280px"><button class="btn sm" id="tm">테스트 메일 보내기</button></div>` : ""}</div>`).join("")
+    + `<div class="row"><span class="small muted">SMTP 비밀번호와 API 키는 암호화해 DB(mrs_setting)에 저장합니다.</span><button class="btn primary right" id="st-save">저장</button></div>`;
+  $("#st-save").onclick = (e) => busy(e.target, async () => {
+    const values = {};
+    $$("[data-k]", v).forEach((i) => { values[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; });
+    const clear = $$("[data-clear]:checked", v).map((c) => c.dataset.clear);
+    await api("settings", { method: "PUT", body: { values, clear } });
+    S.catalog = null; toast("설정을 저장했습니다.", "ok"); route();
+  });
+  $("#tm").onclick = (e) => busy(e.target, async () => {
+    await api("settings/test-mail", { method: "POST", body: { to: $("#tm-to").value } });
+    toast("테스트 메일을 보냈습니다.", "ok");
+  });
 }
 
 boot();

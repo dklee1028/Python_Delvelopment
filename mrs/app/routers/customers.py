@@ -57,6 +57,10 @@ def legacy_link(legacy_id: str, db: Session = Depends(get_db), me: User = Depend
         return customer_out(exist, db)
     c = Customer(legacy_customer_id=legacy_id, name=src["name"], address=src["address"])
     db.add(c)
+    # PMS 고객에 등록된 담당자1·2를 IT 담당자 초기값으로 가져옵니다(이후 MRS 에서 따로 관리).
+    for k, x in enumerate(legacy.contacts_of(src)):
+        c.contacts.append(CustomerContact(name=x["name"], phone=x["phone"], email=x["email"], is_primary=(k == 0),
+                                          receive_reports=bool(x["email"])))
     audit(db, me, "customer.link", src["name"])
     db.commit()
     return customer_out(c, db)

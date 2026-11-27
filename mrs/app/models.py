@@ -222,3 +222,14 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(50))
     target: Mapped[str] = mapped_column(String(100), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class SystemSetting(Base):
+    """화면에서 바꾸는 운영 설정(SMTP·회사정보·AI 키). 비밀값은 암호화 저장. 값이 없으면 .env 값 사용."""
+
+    __tablename__ = "mrs_setting"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+    updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)

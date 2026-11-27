@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 
+from .. import runtime_settings
 from ..config import settings
 from .catalog import REPORT_TYPES, WORK_SUBTYPES
 
@@ -87,15 +88,16 @@ def rule_based(equipments: list[dict], report_type: str = "regular", subtype: st
 
 
 def generate(report_type: str, subtype: str, customer: str, equipments: list[dict], extra: str = "") -> dict:
-    if not settings.anthropic_key:
+    cfg = runtime_settings.current()
+    if not cfg.anthropic_key:
         return {"text": rule_based(equipments, report_type, subtype), "model": "rule-based", "fallback": True,
-                "note": "ANTHROPIC_API_KEY 미설정으로 규칙 기반 초안을 생성했습니다."}
+                "note": "Anthropic API 키 미설정으로 규칙 기반 초안을 생성했습니다."}
     try:
         import anthropic
 
-        client = anthropic.Anthropic(api_key=settings.anthropic_key)
+        client = anthropic.Anthropic(api_key=cfg.anthropic_key)
         resp = client.beta.messages.create(
-            model=settings.ai_model,
+            model=cfg.ai_model or settings.ai_model,
             max_tokens=16000,
             system=SYSTEM_PROMPT,
             output_config={"effort": "medium"},

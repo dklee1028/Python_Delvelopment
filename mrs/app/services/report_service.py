@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from .. import runtime_settings
 from ..config import settings
 from ..models import Customer, Report, ReportFile, User
 from . import analyzer, custom_template, log_parser, pptx_report, xlsx_report
@@ -106,6 +107,7 @@ def build_context(db: Session, report: Report) -> dict:
         })
     st = report.overall_status or "normal"
     plan = dict(report.plan or {})
+    cfg = runtime_settings.current()
     ctx = {
         "report": {
             "id": report.id, "no": report.report_no, "type": report.report_type,
@@ -117,8 +119,10 @@ def build_context(db: Session, report: Report) -> dict:
             "service_codes": report.service_codes or [],
         },
         "service_code_list": SERVICE_CODES,
-        "company": {"name": settings.company_name, "address": settings.company_address, "tel": settings.company_tel,
-                    "email": settings.company_email},
+        # 연락처는 회사 대표번호가 아니라 보고서 담당 엔지니어(사용자 등록 정보)의 연락처를 사용합니다.
+        "company": {"name": cfg.company_name, "address": cfg.company_address,
+                    "tel": (eng.phone if eng else "") or settings.company_tel,
+                    "email": (eng.email if eng else "") or settings.company_email},
         "customer": {
             "name": cust.name, "address": cust.address, "site": cust.site,
             "contact_name": contact.name if contact else "", "contact_phone": contact.phone if contact else "",
