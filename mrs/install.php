@@ -34,7 +34,11 @@ if (!$installed && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (file_put_contents($cfgFile, $code) === false) throw new Exception('config.php 를 쓸 수 없습니다. 폴더 쓰기 권한(705/755)을 확인하세요.');
         @chmod($cfgFile, 0600);
         install_schema($pdo, $db['driver']);
-        if (!val("SELECT COUNT(*) FROM mrs_user WHERE username=?", [$v['admin_id']])) {
+        $exist = val("SELECT id FROM mrs_user WHERE username=?", [$v['admin_id']]);
+        if ($exist) {   // 다시 설치한 경우: 같은 아이디가 이미 있으면 방금 입력한 비밀번호로 바꾸고 잠금을 풉니다.
+            upd('mrs_user', ['password_hash' => password_hash($v['admin_pw'], PASSWORD_DEFAULT), 'full_name' => trim($v['admin_name']), 'role' => 'admin', 'is_active' => 1,
+                'fail_count' => 0, 'locked_until' => null, 'must_change_pw' => 0, 'updated_at' => now()], (int)$exist);
+        } else {
             ins('mrs_user', ['username' => $v['admin_id'], 'password_hash' => password_hash($v['admin_pw'], PASSWORD_DEFAULT), 'full_name' => trim($v['admin_name']),
                 'email' => trim($v['admin_email']), 'phone' => trim($v['admin_phone']), 'title' => '', 'role' => 'admin', 'permissions' => '{}', 'is_active' => 1, 'must_change_pw' => 0,
                 'created_at' => now(), 'updated_at' => now()]);

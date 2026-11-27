@@ -10,7 +10,7 @@ const STATUS = { critical: "위험", warning: "요주의", normal: "정상" };
 const COLOR = { critical: "var(--red)", warning: "var(--amber)", normal: "var(--green)" };
 
 // PHP 웹호스팅용: 모든 요청을 api/index.php?p=경로 로 보내고, PUT/DELETE/PATCH 는 POST + 헤더로 바꿉니다.
-const apiUrl = (path) => { const [p, q] = path.split("?"); return "api/index.php?p=" + encodeURIComponent(p) + (q ? "&" + q : ""); };
+const apiUrl = (path) => { const [p, q] = path.split("?"); return "api/index.php?p=" + p.split("/").map(encodeURIComponent).join("/") + (q ? "&" + q : ""); };
 async function api(path, opt = {}) {
   const m = opt.method || "GET";
   const init = { method: m === "GET" ? "GET" : "POST", headers: {}, credentials: "same-origin" };
@@ -21,6 +21,7 @@ async function api(path, opt = {}) {
   if (res.status === 401 && !path.startsWith("auth/")) { S.me = null; render(); throw new Error("로그인이 필요합니다."); }
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("json") ? await res.json() : await res.text();
+  if (!ct.includes("json")) throw new Error(`서버 응답 오류 (${res.status}). 호스팅이 요청을 막았거나 서버 설정 문제일 수 있습니다.`);
   if (!res.ok) throw new Error((data && data.detail) ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : res.statusText);
   return data;
 }
@@ -186,7 +187,11 @@ function renderLogin() {
     </form></div>`;
   $("#login-form").onsubmit = async (e) => {
     e.preventDefault(); const f = new FormData(e.target);
-    try { S.me = await api("auth/login", { method: "POST", body: { username: f.get("username"), password: f.get("password") } }); S.catalog = null; render(); }
+    try {
+      await api("auth/login", { method: "POST", body: { username: String(f.get("username")).trim(), password: f.get("password") } });
+      try { S.me = await api("auth/me"); } catch (_) { throw new Error("로그인은 되었지만 로그인 상태가 유지되지 않습니다. 주소를 https://www.datanex.io.kr/mrs/ 로 열었는지 확인하고, 계속되면 관리자에게 알려 주세요."); }
+      S.catalog = null; render();
+    }
     catch (err) { toast(err.message, "err"); e.target.animate([{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(0)" }], { duration: 300 }); }
   };
 }

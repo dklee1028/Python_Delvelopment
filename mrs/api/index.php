@@ -584,7 +584,14 @@ route('POST', 'settings/test-mail', function () use ($in) {
     try { smtp_send([$to], [], '[MRS] SMTP 설정 확인 메일', 'MRS SMTP 설정이 정상입니다.', '<p>MRS SMTP 설정이 정상입니다.</p>', []); } catch (Throwable $e) { fail('발송 실패: ' . $e->getMessage(), 502); }
     out(['ok' => true]);
 });
-route('GET', 'health', function () { out(['ok' => true, 'version' => MRS_VERSION]); });
+route('GET', 'health', function () use ($https, $base, $sdir) {
+    // 로그인 문제 진단용 (비밀 정보 없음)
+    $r = ['ok' => true, 'version' => MRS_VERSION, 'php' => PHP_VERSION, 'https' => $https, 'cookie_path' => $base,
+        'session_dir_ok' => is_dir($sdir) && is_writable($sdir), 'session_path' => is_dir($sdir) && is_writable($sdir) ? 'data/sess' : 'server default',
+        'session_works' => isset($_SESSION['probe']) ? 'yes' : 'reload to check', 'admins' => (int)val("SELECT COUNT(*) FROM mrs_user WHERE role='admin' AND is_active=1")];
+    $_SESSION['probe'] = 1;
+    out($r);
+});
 
 /* ---------- 실행 ---------- */
 foreach ($R as [$m, $re, $fn]) {
