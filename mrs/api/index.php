@@ -86,7 +86,8 @@ function user_out($u) {
         'pw_due_at' => $u['pw_due_at'] ?? null, 'pw_expired' => !empty($u['pw_due_at']) && $u['pw_due_at'] <= now(),
         'leader_id' => empty($u['leader_id']) ? null : (int)$u['leader_id'], 'leader_name' => empty($u['leader_id']) ? '' : (string)val("SELECT COALESCE(NULLIF(full_name,''), username) FROM mrs_user WHERE id=?", [$u['leader_id']]),
         'team_size' => (int)val("SELECT COUNT(*) FROM mrs_user WHERE leader_id=? AND is_active=1", [$u['id']]),
-        'assigned' => ['main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$u['id']]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='sub'", [$u['id']])]];
+        'assigned' => ['main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$u['id']]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='sub'", [$u['id']]),
+            'sub_all' => (int)val("SELECT COUNT(*) FROM mrs_customer WHERE id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')", [$u['id']])]]; // 정이 아닌 사이트는 모두 부
 }
 route('POST', 'auth/login', function () use ($in) {
     $u = one("SELECT * FROM mrs_user WHERE username=?", [s($in['username'] ?? '', 64)]);
@@ -377,7 +378,7 @@ function customer_out($cid, $detail = false) {
     $c = one("SELECT * FROM mrs_customer WHERE id=?", [$cid]); if (!$c) fail('고객을 찾을 수 없습니다.', 404);
     [$main, $subs] = cust_assign($cid); $uid = (int)(me()['id'] ?? 0);
     $d = ['id' => (int)$c['id'], 'legacy_customer_id' => $c['legacy_customer_id'], 'name' => $c['name'], 'address' => $c['address'] ?: '', 'site' => $c['site'] ?: '', 'memo' => $c['memo'] ?: '',
-        'main' => $main, 'subs' => $subs, 'my_role' => $main && $main['id'] === $uid ? 'main' : (in_array($uid, array_column($subs, 'id'), true) ? 'sub' : null),
+        'main' => $main, 'subs' => $subs, 'my_role' => $main && $main['id'] === $uid ? 'main' : 'sub', // 정이 아니면 모두 부
         'disposed_count' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE customer_id=? AND disposed_at IS NOT NULL", [$cid]),
         'linked' => (bool)$c['legacy_customer_id'], 'equipment_count' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE customer_id=? AND disposed_at IS NULL", [$cid]),
         'contact_count' => (int)val("SELECT COUNT(*) FROM mrs_customer_contact WHERE customer_id=?", [$cid]), 'report_count' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE customer_id=?", [$cid])];
@@ -393,6 +394,9 @@ route('GET', 'customers', function () {
     $u = need('customer.view'); $uid = (int)$u['id']; $kw = trim((string)g('q')); $scope = g('scope', 'mine'); $p = []; $w = [];
     if ($kw !== '') { $w[] = "(c.name LIKE ? OR c.address LIKE ? OR c.site LIKE ?)"; array_push($p, "%$kw%", "%$kw%", "%$kw%"); }
     if ($scope === 'mine') { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=?)"; $p[] = $uid; }
+    // 정: 내가 정(주) 담당인 사이트 / 부: 내가 정이 아닌 모든 사이트
+    elseif ($scope === 'main') { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')"; $p[] = $uid; }
+    elseif ($scope === 'sub') { $w[] = "c.id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')"; $p[] = $uid; }
     elseif ($scope === 'team') { $ids = visible_user_ids($u); if ($ids !== null) { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id IN (" . implode(',', $ids) . "))"; } }
     elseif ($scope === 'unassigned') $w[] = "c.id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE kind='main')";
     elseif (preg_match('/^user:(\d+)$/', $scope, $m)) { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=?)"; $p[] = (int)$m[1]; }
@@ -415,7 +419,7 @@ route('GET', 'customers', function () {
         foreach ($as[$c['id']] ?? [] as $a) { $x = ['id' => (int)$a['user_id'], 'name' => $a['full_name'] ?: $a['username']]; if ($a['kind'] === 'main') $main = $x; else $subs[] = $x; if ((int)$a['user_id'] === $uid) $my = $a['kind']; }
         $s = $st[$c['id']] ?? null; $r = $rp[$c['id']] ?? null;
         return ['id' => (int)$c['id'], 'name' => $c['name'], 'address' => $c['address'] ?: '', 'site' => $c['site'] ?: '', 'linked' => (bool)$c['legacy_customer_id'], 'legacy_customer_id' => $c['legacy_customer_id'],
-            'main' => $main, 'subs' => $subs, 'my_role' => $my,
+            'main' => $main, 'subs' => $subs, 'my_role' => $my === 'main' ? 'main' : 'sub', 'my_assigned' => $my, // 내가 정이 아니면 모두 '부'
             'equipment_count' => (int)($eq[$c['id']]['act'] ?? 0), 'disposed_count' => (int)($eq[$c['id']]['disp'] ?? 0), 'contact_count' => $cc[$c['id']] ?? 0, 'report_count' => $rc[$c['id']] ?? 0,
             'health' => $s ? ['status' => $s['worst'], 'crit' => $s['crit'], 'warn' => $s['warn'], 'checked' => $s['checked'], 'last_log' => substr($s['last'], 0, 10)] : null,
             'last_report' => $r ? ['no' => $r['report_no'], 'date' => $r['inspection_date'], 'status' => $r['status'], 'type' => REPORT_TYPES[$r['report_type']] ?? $r['report_type']] : null];
@@ -775,7 +779,7 @@ function team_status($me) {
     return array_map(function ($u) use ($m) {
         $id = (int)$u['id'];
         return ['id' => $id, 'name' => $u['full_name'] ?: $u['username'], 'title' => $u['title'] ?: '', 'role_label' => ROLE_LABELS[$u['role']] ?? $u['role'], 'leader_name' => user_name($u['leader_id'] ?? null),
-            'main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$id]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='sub'", [$id]),
+            'main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$id]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer WHERE id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')", [$id]),
             'in_progress' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE engineer_id=? AND status IN ('draft','review')", [$id]),
             'done_month' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE engineer_id=? AND status IN ('completed','sent') AND inspection_date LIKE ?", [$id, $m]),
             'critical' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE engineer_id=? AND overall_status='critical' AND status<>'sent'", [$id]),
