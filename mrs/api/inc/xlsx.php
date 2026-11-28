@@ -84,7 +84,7 @@ class Xlsx {
                 $z->addFromString("xl/drawings/_rels/drawing$k.xml.rels", rels_xml([['rId1', 'image', '../media/logo.png']]));
             }
         }
-        if ($hasImg) $z->addFile(__DIR__ . '/../../assets/img/datanex_color.png', 'xl/media/logo.png');
+        if ($hasImg) $z->addFile(__DIR__ . '/../../assets/img/logo_color.png', 'xl/media/logo.png');
         $z->addFromString('xl/styles.xml', $this->st->xml());
         if (!$z->close()) throw new Exception('엑셀 파일 저장에 실패했습니다.');
     }
@@ -158,7 +158,7 @@ function x_summary($x, $ctx) {
     $ws = $x->sheet('요약');
     $r = x_title($x, $ws, $ctx['report']['title'], "{$ctx['report']['type_label']} · No. {$ctx['report']['no']} · {$ctx['report']['date']}");
     $ws->widths = [1 => 16, 20, 18, 24, 14, 14, 12, 12];
-    $ws->image = [__DIR__ . '/../../assets/img/datanex_color.png', 7, 1, 26];
+    $ws->image = [__DIR__ . '/../../assets/img/logo_color.png', 7, 1, 20];
     $c = $ctx['customer'];
     $r = x_section($x, $ws, $r, '고객 정보 (Customer Info)');
     $r = x_table($x, $ws, $r, [
@@ -219,6 +219,13 @@ function x_system($x, $ctx, $e) {
         $r = x_table($x, $ws, $r, $rows, ['tint' => function ($j, $v) { return $j === 0 ? (in_array($v, ['EMERGENCY', 'ALERT'], true) ? C_RED : C_AMBER) : null; }]);
     }
     if (!empty($e['parsed']['files'])) $ws->set($r, 1, '분석 로그: ' . implode(', ', $e['parsed']['files']), $x->st->get(['size' => 8, 'color' => C_GREY]));
+}
+function x_service($x, $ctx) {
+    if (empty($ctx['report']['service'])) return;
+    $ws = $x->sheet('서비스 작업');
+    $r = x_title($x, $ws, '서비스 작업 내역', 'Service Code: ' . implode(', ', $ctx['report']['service_codes']), 4);
+    $ws->widths = [1 => 18, 90];
+    foreach ($ctx['report']['service'] as $sv) { $r = x_section($x, $ws, $r, $sv['title']); $r = x_table($x, $ws, $r, $sv['rows'], ['header' => false, 'label_cols' => [0]]); }
 }
 function x_perf($x, $ctx, $e) {
     $pf = $e['perf']; if (!$pf) return;
@@ -296,9 +303,11 @@ function build_xlsx($ctx, $path) {
     $x = new Xlsx(); $x->title = $ctx['report']['title'];
     x_summary($x, $ctx);
     if ($ctx['report']['type'] === 'workplan') x_workplan($x, $ctx);
-    foreach ($ctx['equipments'] as $e) x_system($x, $ctx, $e);
+    x_service($x, $ctx);
+    $SEC = $ctx['report']['sections'] ?? service_sections([]);
+    if ($SEC['system'] ?? false) foreach ($ctx['equipments'] as $e) x_system($x, $ctx, $e);
     foreach ($ctx['equipments'] as $e) x_perf($x, $ctx, $e);
-    x_cmd_checks($x, $ctx);
-    x_visual($x, $ctx);
+    if ($SEC['checks'] ?? false) x_cmd_checks($x, $ctx);
+    if ($SEC['visual'] ?? false) x_visual($x, $ctx);
     $x->save($path);
 }

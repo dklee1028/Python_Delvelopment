@@ -621,7 +621,7 @@ route('GET', 'collect/catalog', function () {
 /* ===== 보고서 ===== */
 route('GET', 'catalog', function () {
     need('report.view');
-    out(['report_types' => REPORT_TYPES, 'work_subtypes' => WORK_SUBTYPES, 'service_codes' => SERVICE_CODES, 'visual_items' => VISUAL_ITEMS, 'visual_choices' => VISUAL_CHOICES,
+    out(['report_types' => REPORT_TYPES, 'work_subtypes' => WORK_SUBTYPES, 'service_codes' => SERVICE_CODES, 'service_profile' => SERVICE_PROFILE, 'visual_items' => VISUAL_ITEMS, 'visual_choices' => VISUAL_CHOICES,
         'default_steps' => default_steps(), 'default_rollback' => DEFAULT_ROLLBACK, 'status' => STATUS_KO, 'variants' => VARIANT_LABEL,
         'ai_enabled' => (bool)conf('anthropic_key'), 'mail_enabled' => mail_ready(),
         'cmd_scripts' => ['regular' => cdot_command_script('regular'), 'special' => cdot_command_script('special')],
@@ -750,7 +750,11 @@ route('PUT', 'reports/(\d+)', function ($id) use ($in) {
 });
 route('POST', 'reports/(\d+)/ai-advice', function ($id) use ($in) {
     need('report.edit'); $r = report_get($id); run_analysis($r); $ctx = build_context($r);
-    $res = ai_generate($r['report_type'], $r['work_subtype'], $ctx['customer']['name'], $ctx['equipments'], s($in['notes'] ?? '', 4000));
+    // 서비스 코드별 중점과 엔지니어가 적은 작업 내역을 AI 에 함께 전달
+    $svc = [];
+    foreach ($ctx['report']['service_codes'] ?: ['PM'] as $c) if (isset(SERVICE_PROFILE[$c])) $svc[] = "[$c · " . SERVICE_PROFILE[$c]['label'] . '] 중점: ' . SERVICE_PROFILE[$c]['focus'];
+    foreach ($ctx['report']['service'] as $sv) foreach ($sv['rows'] as [$k, $v]) if ($v !== '(미입력)') $svc[] = "{$sv['code']} {$k}: $v";
+    $res = ai_generate($r['report_type'], $r['work_subtype'], $ctx['customer']['name'], $ctx['equipments'], trim("서비스 코드\n" . implode("\n", $svc) . "\n\n" . s($in['notes'] ?? '', 4000)));
     $d = ['ai_advice' => $res['text'], 'ai_model' => mb_substr($res['model'], 0, 60), 'ai_generated_at' => now(), 'diagnosis_reviewed' => 0, 'updated_at' => now()];
     if (b($in['replace_diagnosis'] ?? true) || !$r['diagnosis']) $d['diagnosis'] = $res['text'];
     upd('mrs_report', $d, $id); audit('report.ai', $r['report_no'], $res['model']);

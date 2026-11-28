@@ -99,7 +99,8 @@ function build_context($r) {
         'report' => ['id' => (int)$r['id'], 'no' => $r['report_no'], 'type' => $r['report_type'], 'type_label' => REPORT_TYPES[$r['report_type']] ?? $r['report_type'],
             'subtype_label' => WORK_SUBTYPES[$r['work_subtype']] ?? '', 'title' => $r['title'], 'date' => $r['inspection_date'] ?: today(),
             'variant' => $r['variant'], 'variant_label' => VARIANT_LABEL[$r['variant']] ?? '', 'overall_status' => $st, 'overall_label' => STATUS_LONG[$st] ?? '',
-            'service_codes' => jd($r['service_codes'], [])],
+            'service_codes' => jd($r['service_codes'], []), 'sections' => service_sections(jd($r['service_codes'], [])),
+            'service' => service_rows(jd($r['service_codes'], []), (array)(jd($r['plan'], [])['service'] ?? []))],
         // 연락처는 회사 대표번호가 아니라 보고서 담당 엔지니어(사용자 등록 정보)의 연락처를 사용합니다.
         'company' => ['name' => conf('company_name'), 'address' => conf('company_address'), 'tel' => $eng['phone'], 'email' => $eng['email']],
         'customer' => ['name' => $cust['name'], 'address' => $cust['address'] ?: '', 'site' => $cust['site'] ?: '', 'contact_name' => $contact['name'] ?? '',
@@ -147,4 +148,18 @@ function missing_for_completion($r) {
     }
     if (trim($r['final_comment'] ?? '') === '') $miss[] = '엔지니어 최종 Comment';
     return $miss;
+}
+
+/* 서비스 작업 내역: 고른 코드 중 입력 칸이 있는 코드마다 [제목, [[이름, 내용], ...]] */
+function service_rows($codes, $svc) {
+    $out = [];
+    foreach (array_values(array_intersect((array)$codes, SERVICE_CODES)) as $c) {
+        $pf = SERVICE_PROFILE[$c]; if (!$pf['fields']) continue;
+        $v = (array)($svc[$c] ?? []); $rows = [];
+        // 고객에게 나가는 보고서이므로 비어 있는 칸은 넣지 않습니다. 하나도 안 적었으면 그 코드의 표는 생략
+        foreach ($pf['fields'] as [$k, $label]) if (($t = trim((string)($v[$k] ?? ''))) !== '') $rows[] = [$label, $t];
+        if (!$rows) continue;
+        $out[] = ['code' => $c, 'title' => "$c · {$pf['label']}", 'rows' => $rows];
+    }
+    return $out;
 }

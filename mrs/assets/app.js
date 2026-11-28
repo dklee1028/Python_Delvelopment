@@ -188,7 +188,7 @@ function render() {
     <aside class="side" id="side">
       <div class="brand"><img src="assets/icons/mrs-192.png" alt=""><div><b>MRS</b><span>Management Report System</span></div></div>
       <nav class="nav">${ROUTES.filter((r) => can(r[3]) && (!S.offline || r[0] === "collect")).map((r) => `<a href="#/${r[0]}" data-r="${r[0]}">${r[2]}<span>${r[1]}</span></a>`).join("")}</nav>
-      <div class="foot"><img src="assets/img/datanex_color.png" alt="DATANEX">v1.0 · ${esc(S.me.role_label)}</div>
+      <div class="foot"><div class="dx"><img src="assets/img/logo_color.png" alt="DATANEX"></div><span>MRS v1.0 · ${esc(S.me.role_label)}</span></div>
     </aside>
     <div class="main">
       <header class="top">
@@ -241,7 +241,7 @@ function renderLogin() {
   $("#app").innerHTML = `
   <div class="login"><div class="orb a"></div><div class="orb b"></div>
     <form class="login-card" id="login-form">
-      <div class="row"><img class="mrs" src="assets/icons/mrs-192.png" alt="MRS"><img class="logo right" src="assets/img/datanex_color.png" alt="DATANEX"></div>
+      <div class="row"><img class="mrs" src="assets/icons/mrs-192.png" alt="MRS"><img class="logo right" src="assets/img/logo_color.png" alt="DATANEX"></div>
       <h1>Management Report System</h1>
       <p class="muted" style="margin:4px 0 18px">로그만 넣으면, 컨설턴트 수준의 보고서가 완성됩니다.</p>
       <label class="f">아이디</label><input type="text" name="username" autocomplete="username" required autofocus>
@@ -405,9 +405,10 @@ async function pageNew(v) {
       z.innerHTML = `<div class="card"><h3>기본 정보</h3><div class="grid g3">
         <div><label class="f">${W.type === "workplan" ? "작성일" : "점검일"}</label><input type="date" id="dt" value="${W.date}"></div>
         <div style="grid-column:span 2"><label class="f">보고서 제목 (비우면 자동)</label><input type="text" id="ti" placeholder="${esc(W.customer.name)} ${W.type === "workplan" ? esc(C.work_subtypes[W.subtype]) + " 작업계획서" : esc(C.report_types[W.type])}"></div></div>
-        ${W.type !== "workplan" ? `<label class="f">Service Code</label><div class="row">${C.service_codes.map((s) => `<label class="chip ${W.codes.includes(s) ? "" : "gray"}" style="cursor:pointer"><input type="checkbox" data-sc="${s}" ${W.codes.includes(s) ? "checked" : ""} hidden>${s}</label>`).join("")}</div>` : ""}
+        ${W.type !== "workplan" ? `<label class="f">Service Code</label><div class="row">${C.service_codes.map((s) => `<label class="chip ${W.codes.includes(s) ? "" : "gray"}" style="cursor:pointer"><input type="checkbox" data-sc="${s}" ${W.codes.includes(s) ? "checked" : ""} hidden>${s}${C.service_profile?.[s] ? ` <span class="small" style="opacity:.75">${esc(C.service_profile[s].label)}</span>` : ""}</label>`).join("")}</div>
+          <div class="small muted" style="margin-top:6px">${svcHint(W.codes)}</div>` : ""}
         </div>${W.type === "workplan" ? `<div class="card" style="margin-top:16px" id="planbox"></div>` : ""}`;
-      $$("[data-sc]", z).forEach((c) => c.parentElement.onclick = (e) => { e.preventDefault(); c.checked = !c.checked; W.codes = c.checked ? [...W.codes, c.dataset.sc] : W.codes.filter((x) => x !== c.dataset.sc); c.parentElement.classList.toggle("gray", !c.checked); });
+      $$("[data-sc]", z).forEach((c) => c.parentElement.onclick = (e) => { e.preventDefault(); c.checked = !c.checked; W.codes = c.checked ? [...W.codes, c.dataset.sc] : W.codes.filter((x) => x !== c.dataset.sc); c.parentElement.classList.toggle("gray", !c.checked); const h = c.closest(".row").nextElementSibling; if (h) h.innerHTML = svcHint(W.codes); });
       if (W.type === "workplan") planEditor($("#planbox"), W.plan);
     }
     $("#wz-prev").onclick = () => { W.step--; draw(); };
@@ -495,6 +496,7 @@ async function pageReport(v, id) {
 
     <h3 style="margin:22px 0 10px">① 로그 분석 결과</h3>
     <div class="grid ${R.equipments.length === 1 ? "" : R.equipments.length <= 3 ? "g3" : "g4"}">${R.equipments.map((e) => eqCard(e, R.equipments.length === 1)).join("")}</div>
+    ${R.report_type !== "workplan" ? svcCard(R, editable) : ""}
 
     <div class="grid g2" style="margin-top:22px">
       <div class="card"><h3>② Claude AI 진단 조언 <span class="chip critical">필수</span></h3>
@@ -547,6 +549,11 @@ async function pageReport(v, id) {
       if (!$("#diag-ok").checked) throw new Error("진단 의견 검토 확인란을 체크하세요.");
       await saveDiag(); await api(`reports/${id}/generate`, { method: "POST" }); await reload("검토본 PPT·엑셀이 생성되었습니다. 육안점검과 최종 Comment로 마무리하세요.");
     }));
+    $("#svc-save") && ($("#svc-save").onclick = (e) => busy(e.target, async () => {
+      const svc = {}; $$("[data-svc]", v).forEach((t) => { const [c, k] = t.dataset.svc.split("."); (svc[c] = svc[c] || {})[k] = t.value.trim(); });
+      const plan = Object.assign({}, R.plan || {}, { service: svc }); await api(`reports/${id}/plan`, { method: "PUT", body: { plan } }); R.plan = plan;
+      toast("서비스 작업 내역을 저장했습니다. 보고서를 다시 생성하면 반영됩니다.", "ok");
+    }));
     if ($("#planbox")) { planEditor($("#planbox"), R.plan); $("#plan-save").onclick = (e) => busy(e.target, async () => { await api(`reports/${id}/plan`, { method: "PUT", body: { plan: R.plan } }); toast("저장되었습니다. 보고서를 다시 생성하면 반영됩니다.", "ok"); }); }
     $$(".seg button[data-eq]", v).forEach((b) => b.onclick = () => {
       (vis[b.dataset.eq] = vis[b.dataset.eq] || {})[b.dataset.k] = b.dataset.v;
@@ -576,6 +583,23 @@ function eqCard(e, wide) {
       + (a.findings.length > (wide ? 10 : 4) ? `<div class="small muted">외 ${a.findings.length - (wide ? 10 : 4)}건</div>` : "") : '<div class="ok-box">주요 이상 징후가 없습니다.</div>'}</div></div>`;
 }
 
+// 서비스 코드별 보고서 구성 안내 · 작업 내역 입력 카드
+const SEC_KO = { system: "용량·진단", util: "CPU·디스크·네트워크 사용률", checks: "점검 항목 결과표", visual: "육안 점검" };
+function svcHint(codes, here) {
+  const P = (S.catalog || {}).service_profile || {}; const cs = (codes || []).filter((c) => P[c]); const use = cs.length ? cs : ["PM"];
+  const sec = [...new Set(use.flatMap((c) => P[c] ? P[c].sections : []))];
+  const work = cs.filter((c) => P[c].fields.length);
+  return `📄 보고서 구성: ${sec.map((x) => SEC_KO[x]).join(" · ") || "작업 내역"}${work.length ? ` + <b>서비스 작업 내역</b>(${work.join(", ")})${here ? "" : " — 보고서 상세 화면에서 입력"}` : ""}${cs.length ? "" : " (코드 미선택 = PM)"}`;
+}
+function svcCard(R, editable) {
+  const P = (S.catalog || {}).service_profile || {}; const sv = (R.plan && R.plan.service) || {};
+  const cs = (R.service_codes || []).filter((c) => P[c] && P[c].fields.length);
+  if (!cs.length) return `<div class="small muted" style="margin-top:10px">${svcHint(R.service_codes)}</div>`;
+  return `<div class="card" style="margin-top:22px"><h3>🛠 서비스 작업 내역 </h3><div class="small muted" style="margin:-6px 0 10px">${svcHint(R.service_codes, true)} · 적은 칸만 보고서에 들어갑니다</div>
+    <div class="grid ${cs.length > 1 ? "g2" : ""}">${cs.map((c) => `<div><b>${esc(c)} · ${esc(P[c].label)}</b>${P[c].fields.map(([k, l, ph]) => `<label class="f">${esc(l)}</label>
+      <textarea data-svc="${c}.${k}" rows="2" style="min-height:54px" placeholder="${esc(ph)}" ${editable ? "" : "readonly"}>${esc((sv[c] || {})[k] || "")}</textarea>`).join("")}</div>`).join("")}</div>
+    ${editable ? '<div class="row" style="margin-top:10px"><button class="btn right" id="svc-save">작업 내역 저장</button></div>' : ""}</div>`;
+}
 // 장비 카드 아래 한 줄 정보: cDOT 점검 항목 결과, 제외한 볼륨, 자동 선택한 로그, 성능 아카이브
 const CK_LABEL = { normal: ["정상", "normal"], warning: ["주의", "warning"], critical: ["위험", "critical"], info: ["참고", "gray"], missing: ["로그 없음", "gray"] };
 function eqInfo(e) {

@@ -7,6 +7,46 @@ const WORK_SUBTYPES = [
     'expansion' => '디스크/셸프 증설', 'install' => '신규 설치·구성', 'migration' => '데이터 마이그레이션', 'etc' => '기타 작업',
 ];
 const SERVICE_CODES = ['Repair', 'PM', 'Install', 'Deinstall', 'Upgrade', 'Move', 'Reconfig', 'etc'];
+/* 서비스 코드별 보고서 구성
+   sections: system(용량·진단) / util(사용률) / checks(점검 항목 결과표) / visual(육안 점검) 중 이 코드에서 넣을 것
+   fields  : 보고서의 '서비스 작업 내역' 표에 들어갈 입력 칸 [키, 이름, 안내]
+   focus   : AI 진단 조언이 중점으로 볼 내용
+   여러 코드를 고르면 넣을 섹션은 합쳐지고, 작업 내역 표는 코드마다 하나씩 들어갑니다. 아무 코드도 없으면 PM 과 같습니다. */
+const SERVICE_PROFILE = [
+    'PM' => ['label' => '정기 예방 점검', 'sections' => ['system', 'util', 'checks', 'visual'], 'fields' => [],
+        'focus' => '전반적인 상태, 용량 추세, 잠재 위험의 예방 조치'],
+    'Repair' => ['label' => '장애 처리 · 부품 교체', 'sections' => ['system', 'checks', 'visual'], 'fields' => [
+        ['symptom', '장애 증상', '언제 어떤 현상이 있었는지'], ['cause', '원인', '로그·점검으로 확인한 원인'], ['action', '조치 내용', '수행한 조치'],
+        ['parts', '교체 부품', '부품명 · P/N · 기존 S/N → 신규 S/N'], ['result', '조치 후 상태', '정상 동작 확인 내용']],
+        'focus' => '장애 원인과 조치 결과의 타당성, 재발 방지, 교체 부품 이후 상태'],
+    'Install' => ['label' => '신규 설치 · 구성', 'sections' => ['system', 'checks', 'visual'], 'fields' => [
+        ['scope', '설치 범위', '설치한 장비·셸프·디스크 구성'], ['config', '구성 내용', 'Aggregate·SVM·LIF·프로토콜 등'],
+        ['verify', '구성 검증', '케이블링·이중화(Takeover/Giveback)·AutoSupport·SP·NTP 확인'], ['license', '라이선스', '적용한 라이선스'], ['handover', '인수 사항', '고객 인계 내용']],
+        'focus' => '설치·구성이 권장 구성(Best Practice)에 맞는지와 이중화 검증 결과'],
+    'Deinstall' => ['label' => '철거 · 반출', 'sections' => ['visual'], 'fields' => [
+        ['target', '철거 대상', '장비·셸프·부품 목록'], ['data', '데이터 처리', '데이터 이관·삭제(초기화) 방법과 확인'],
+        ['shutdown', '종료 절차', '서비스 종료·전원 차단 순서'], ['handover', '반출 · 인수', '반출 일시와 인수자 확인']],
+        'focus' => '데이터 삭제·이관 확인과 철거 절차의 누락 여부'],
+    'Upgrade' => ['label' => 'OS · 펌웨어 업그레이드', 'sections' => ['system', 'util', 'checks', 'visual'], 'fields' => [
+        ['version', '버전 변경', '이전 버전 → 신규 버전 (OS·디스크·셸프 펌웨어)'], ['method', '진행 방식', 'NDU(무중단)·롤링 등'],
+        ['precheck', '사전 점검', '업그레이드 전 확인 결과'], ['postcheck', '사후 점검', '업그레이드 후 확인 결과'], ['impact', '서비스 영향', '중단 여부·시간']],
+        'focus' => '업그레이드 전후 상태 비교, 호환성, 후속 권고(패치·펌웨어)'],
+    'Move' => ['label' => '장비 이전', 'sections' => ['system', 'checks', 'visual'], 'fields' => [
+        ['from_to', '이전 위치', '이전 전 → 이전 후 위치'], ['shutdown', '종료 · 기동', '종료·운반·기동 순서와 시간'],
+        ['cabling', '재연결', '전원·네트워크·셸프 케이블 재연결 확인'], ['result', '이전 후 상태', '기동 후 정상 확인 내용']],
+        'focus' => '이전 후 하드웨어·경로·이중화 정상 여부'],
+    'Reconfig' => ['label' => '구성 변경', 'sections' => ['system', 'util', 'checks'], 'fields' => [
+        ['change', '변경 내용', '무엇을 바꿨는지'], ['before_after', '변경 전 → 후', '설정 값 비교'], ['reason', '변경 사유', '요청 배경'], ['verify', '변경 후 확인', '확인 결과']],
+        'focus' => '변경 내용의 영향 범위와 변경 후 정상 여부'],
+    'etc' => ['label' => '기타 작업', 'sections' => ['system'], 'fields' => [['work', '작업 내용', ''], ['result', '결과', '']],
+        'focus' => '작업 내용과 결과'],
+];
+/* 고른 서비스 코드 → 보고서에 넣을 섹션 (합집합). 코드가 없으면 PM */
+function service_sections($codes) {
+    $codes = array_values(array_intersect((array)$codes, SERVICE_CODES)) ?: ['PM'];
+    $s = []; foreach ($codes as $c) foreach (SERVICE_PROFILE[$c]['sections'] as $x) $s[$x] = true;
+    return $s;
+}
 const VISUAL_ITEMS = [
     ['hdd', 'HDD / Spare Disk'], ['psu', 'Power Supply'], ['controller', 'Controller / IO'], ['syslog', 'System Log'],
     ['sfp', 'SFP Status'], ['logical', 'Disk Logical Drive'], ['battery', 'Battery Status'], ['volume', 'Disk Volume'],

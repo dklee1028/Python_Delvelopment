@@ -1,7 +1,7 @@
 /* MRS Service Worker — 화면 파일만 캐시(오프라인에서도 앱 실행), api 는 항상 네트워크 */
-const CACHE = "mrs-shell-v6";
+const CACHE = "mrs-shell-v7";
 const SHELL = ["./", "assets/app.css", "assets/app.js", "assets/icons/mrs-192.png", "assets/icons/mrs-512.png",
-  "assets/img/datanex_color.png", "manifest.webmanifest"];
+  "assets/img/logo_color.png", "manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));

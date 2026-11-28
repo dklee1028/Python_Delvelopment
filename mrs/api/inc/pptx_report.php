@@ -16,14 +16,15 @@ function p_header($s, $ctx, $ko, $en, $sw) {
     k_rect($s, M_(), cm(0.55), cm(0.12), cm(1.4), C_BLUE);
     k_text($s, M_() + cm(0.35), cm(0.42), $sw - cm(9), cm(1.0), $ko, 19, true, C_NAVY);
     k_text($s, M_() + cm(0.35), cm(1.4), $sw - cm(9), cm(0.6), $en . '  ·  ' . $ctx['customer']['name'] . '  ·  ' . $ctx['report']['date'], 9, false, C_GREY);
-    k_logo($s, $sw - cm(5.6), cm(0.55), cm(0.85));
-    k_text($s, $sw - cm(6.6), cm(1.55), cm(5.6), cm(0.5), 'No. ' . $ctx['report']['no'], 8, true, C_GREY, 'r', 'm');
+    k_logo($s, $sw - M_() - cm(4.4), cm(0.95), cm(4.4));
+    k_text($s, $sw - M_() - cm(5.6), cm(1.5), cm(5.6), cm(0.5), 'No. ' . $ctx['report']['no'], 8, true, C_GREY, 'r', 'm');
     return cm(3.0);
 }
 function p_page_header($s, $ctx, $title, $sw) {
     k_rect($s, M_(), cm(0.55), cm(0.12), cm(0.75), C_BLUE);
     k_text($s, M_() + cm(0.3), cm(0.45), $sw - cm(9), cm(0.95), $title, 13, true, C_NAVY, 'l', 'm');
-    k_text($s, $sw - cm(8), cm(0.5), cm(7), cm(0.85), $ctx['customer']['name'] . ' · ' . $ctx['report']['date'], 8, false, C_GREY, 'r', 'm');
+    k_logo($s, $sw - M_() - cm(2.6), cm(0.925), cm(2.6));
+    k_text($s, $sw - M_() - cm(10.2), cm(0.5), cm(7.2), cm(0.85), $ctx['customer']['name'] . ' · ' . $ctx['report']['date'], 8, false, C_GREY, 'r', 'm');
     k_line($s, M_(), cm(1.55), $sw - M_(), cm(1.55), C_LINE, 0.75);
     return cm(1.9);
 }
@@ -233,6 +234,16 @@ function p_system_compact($s, $ctx, $e, $y, $sw, $vl = 5, $fl = 3) {
 /* 성능 세부 분석 (perf_archive) — 지표 표 + 해석. 성능 아카이브가 있는 장비만 */
 const PERF_GROUP_KO = ['cpu' => 'CPU', 'latency' => '지연시간', 'ops' => 'IOPS', 'throughput' => '처리량', 'disk' => '디스크', 'net' => '네트워크', 'other' => '기타'];
 function perf_num($v) { if ($v === null) return '-'; $a = abs($v); return $a >= 1000 ? number_format($v, 0) : ($a >= 10 ? number_format($v, 1) : number_format($v, 2)); }
+/* 서비스 코드별 작업 내역 (Repair·Install·Upgrade 등) */
+function p_service($s, $ctx, $y, $sw) {
+    $m = M_(); $W = $sw - 2 * $m;
+    foreach ($ctx['report']['service'] as $sv) {
+        $y = k_section($s, $m, $y, $W, "서비스 작업 내역 – {$sv['title']}");
+        $y = k_table($s, $m, $y, $W, array_map(function ($r) { return [$r[0], clip($r[1], 160)]; }, $sv['rows']),
+            ['col_w' => [1.3, 6.7], 'header' => false, 'label_cols' => [0], 'size' => 8, 'row_h' => cm(0.62), 'align' => ['c', 'l']]) + cm(0.3);
+    }
+    return $y;
+}
 /* 시스템 사용률 (CPU · 디스크 · 네트워크) — 정기·특별 공통, 로그의 sysstat/ifstat 출력 기준 */
 function p_util($s, $ctx, $e, $y, $sw, $lim = 8) {
     $u = $e['util'] ?? null; if (!$u) return $y;
@@ -368,14 +379,15 @@ function build_inspection($ctx, $path) {
     $s = $prs->slide(); $F['pages'][] = $s; $F['s'] = $s;
     $F['y'] = p_header($s, $ctx, $title, 'Storage Service Report', $sw);
     $F['y'] = p_customer($s, $ctx, $F['y'], $sw);
-    $eqs = $ctx['equipments'];
+    $eqs = $ctx['equipments']; $SEC = $ctx['report']['sections'] ?? service_sections([]);
     if ($variant === 'single') {
         $e = $eqs[0];
         $F['y'] = k_section($s, $m, $F['y'], $W, '점검 장비 정보 (Equipment Info)');
         $F['y'] = k_table($s, $m, $F['y'], $W, [['Model', "{$e['vendor']} {$e['model']}" . ($e['ha_type'] ? " ({$e['ha_type']})" : ''), 'System S/N', $e['serial']], ['OS Ver', $e['os_version'], 'Disk Type', $e['disk_info']]],
             ['col_w' => [1.2, 2.8, 1.2, 2.8], 'header' => false, 'label_cols' => [0, 2], 'size' => 8, 'row_h' => cm(0.55), 'align' => ['c', 'l', 'c', 'l']]) + cm(0.3);
-        flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_detail($s, $ctx, $e, $y, $sw, 8, 5, 5); });
-        if (!empty($e['util'])) flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_util($s, $ctx, $e, $y, $sw, 8); });
+        foreach ($ctx['report']['service'] as $sv) flow_put($F, function ($s, $y) use ($ctx, $sv, $sw) { $c = $ctx; $c['report']['service'] = [$sv]; return p_service($s, $c, $y, $sw); });
+        if ($SEC['system'] ?? false) flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_detail($s, $ctx, $e, $y, $sw, 8, 5, 5); });
+        if (($SEC['util'] ?? false) && !empty($e['util'])) flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_util($s, $ctx, $e, $y, $sw, 8); });
         if (!empty($e['perf'])) { $F['title'] = '성능 세부 분석 (Performance)'; flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_perf($s, $ctx, $e, $y, $sw, 14, 22); }); }
         $F['title'] = '점검 결과 및 종합 의견';
     } else {
@@ -384,15 +396,16 @@ function build_inspection($ctx, $path) {
             $F['y'] = p_scope($s, $ctx, $F['y'], $sw);
             $F['y'] = p_exec_summary($s, $ctx, $F['y'], $sw);
         } else $F['y'] = p_fleet_dash($s, $ctx, $F['y'], $sw, $sh);
+        foreach ($ctx['report']['service'] as $sv) flow_put($F, function ($s, $y) use ($ctx, $sv, $sw) { $c = $ctx; $c['report']['service'] = [$sv]; return p_service($s, $c, $y, $sw); });
         flow_put($F, function ($s, $y) use ($ctx, $sw) { return p_key_issues($s, $ctx, $y, $sw); });
-        foreach ($eqs as $e) {
+        if ($SEC['system'] ?? false) foreach ($eqs as $e) {
             if ($variant === 'multi') flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_compact($s, $ctx, $e, $y, $sw, 6, 5); }, cm(0.1));
             else flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_compact($s, $ctx, $e, $y, $sw); });
         }
-        foreach ($eqs as $e) if (!empty($e['util'])) flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_util($s, $ctx, $e, $y, $sw, 5); });
+        if ($SEC['util'] ?? false) foreach ($eqs as $e) if (!empty($e['util'])) flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_util($s, $ctx, $e, $y, $sw, 5); });
         foreach ($eqs as $e) if (!empty($e['perf'])) { $F['title'] = '성능 세부 분석 (Performance)'; flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_perf($s, $ctx, $e, $y, $sw, 8, 12); }); }
         $F['title'] = '종합 점검 결과 (Summary)';
-        flow_checks($F, $ctx, $sw);
+        if ($SEC['checks'] ?? false) flow_checks($F, $ctx, $sw);
     }
     if ($variant !== 'single') {
         $bt = $F['bottom'];
@@ -402,8 +415,8 @@ function build_inspection($ctx, $path) {
         foreach ($F['pages'] as $i => $p) k_footer($p, $sw, $sh, $ctx['company'], $i + 1, count($F['pages']));
         $prs->save($path); return;
     }
-    flow_put($F, function ($s, $y) use ($ctx, $eqs, $sw) { return p_visual_single($s, $ctx, $eqs[0], $y, $sw); });
-    flow_checks($F, $ctx, $sw);
+    if ($SEC['visual'] ?? false) flow_put($F, function ($s, $y) use ($ctx, $eqs, $sw) { return p_visual_single($s, $ctx, $eqs[0], $y, $sw); });
+    if ($SEC['checks'] ?? false) flow_checks($F, $ctx, $sw);
     $op = $variant === 'single' ? "엔지니어 진단 의견 (Engineer's Opinion)" : "종합 엔지니어 의견 (Comprehensive Engineer's Opinion)";
     // 의견란은 남은 공간에 맞춰 늘거나 줄어듭니다. 최소 높이도 안 되면 새 페이지
     $need = measure_h($sw, $sh, function ($s, $y) use ($ctx, $sw, $op) { return p_opinion($s, $ctx, $y, $sw, cm(200), $op); });
@@ -418,7 +431,8 @@ function wide_title($s, $ctx, $title, $num = '') {
     $sw = WIDE_W;
     k_rect($s, cm(1.3), cm(0.62), cm(0.13), cm(0.8), C_BLUE);
     k_text($s, cm(1.6), cm(0.5), $sw - cm(12), cm(1.05), ($num ? "$num. " : '') . $title, 17, true, C_NAVY, 'l', 'm');
-    k_text($s, $sw - cm(10.3), cm(0.6), cm(9), cm(0.8), $ctx['customer']['name'] . ' · ' . $ctx['plan_title'], 8.5, false, C_GREY, 'r', 'm');
+    k_logo($s, $sw - cm(1.3) - cm(3.0), cm(1.0), cm(3.0));
+    k_text($s, $sw - cm(13.6), cm(0.6), cm(9), cm(0.8), $ctx['customer']['name'] . ' · ' . $ctx['plan_title'], 8.5, false, C_GREY, 'r', 'm');
     k_line($s, cm(1.3), cm(1.75), $sw - cm(1.3), cm(1.75));
     return cm(2.1);
 }
@@ -446,7 +460,7 @@ function build_workplan($ctx, $path) {
     k_text($s, $L, cm(1.15), $W - cm(8), cm(0.7), $ctx['customer']['name'], 12, false, C_GREY);
     k_text($s, $L, cm(1.85), $W - cm(8), cm(1.3), $ctx['plan_title'], 24, true, C_NAVY);
     k_text($s, $L, cm(3.25), $W - cm(8), cm(0.6), "{$ctx['report']['subtype_label']} · 작성일 {$ctx['report']['date']} · No. {$ctx['report']['no']}", 9.5, false, C_GREY);
-    k_logo($s, $sw - $L - cm(4.6), cm(1.1), cm(0.9));
+    k_logo($s, $sw - $L - cm(5.0), cm(1.5), cm(5.0));
     k_text($s, $sw - $L - cm(7), cm(2.3), cm(7), cm(1.3), "작성: {$ctx['company']['name']}\n" . trim($eng['name'] . ' ' . $eng['title']), 9.5, false, C_INK, 'r');
     $y = cm(4.9); $lw = (int)($W * 0.6); $rw = $W - $lw - $gap; $rx = $L + $lw + $gap;
     $ly = wide_sub($s, $L, $y, $lw, '작업 개요');

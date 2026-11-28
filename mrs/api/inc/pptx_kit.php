@@ -175,7 +175,12 @@ function k_image($s, $path, $x, $y, $h) {
     $s->add('<p:pic><p:nvPicPr><p:cNvPr id="' . $id . '" name="Picture ' . $id . '"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>'
         . '<p:blipFill><a:blip r:embed="' . $rid . '"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>' . xfrm($x, $y, $w, $h) . '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>');
 }
-function k_logo($s, $x, $y, $h) { k_image($s, __DIR__ . '/../../assets/img/datanex_color.png', $x, $y, $h); }
+/* DATANEX 로고: 여백을 잘라 낸 파일(가로 8.2 : 세로 1)을 '가로 폭' 기준으로 놓습니다. $y 는 로고 세로 가운데.
+   브랜드 가이드: 흰/옅은 바탕 = 컬러(검정 DATA + 파랑 NEX), 어두운 바탕 = 흰 DATA + 파랑 NEX */
+function k_logo($s, $x, $yMid, $w, $variant = 'color') {
+    $f = __DIR__ . '/../../assets/img/logo_' . $variant . '.png'; $sz = @getimagesize($f); if (!$sz) return;
+    $h = (int)round($w * $sz[1] / $sz[0]); k_image($s, $f, $x, $yMid - intdiv($h, 2), $h);
+}
 
 /* 좌측 블루 바 + 제목 + 얇은 구분선 (샘플 보고서의 섹션 헤더 스타일) */
 function k_section($s, $x, $y, $w, $title, $size = 12) {
@@ -286,9 +291,10 @@ function k_kpi($s, $x, $y, $w, $h, $value, $label, $color = C_NAVY, $accent = C_
 function k_footer($s, $sw, $sh, $company, $page, $total) {
     $y = $sh - cm(1.0);
     k_line($s, cm(1.0), $y, $sw - cm(1.0), $y);
-    $parts = array_filter([$company['name'] ?? '', $company['address'] ?? '']);
+    $parts = array_filter([$company['address'] ?? '']); // 회사 이름은 왼쪽 로고로 표시
     $contact = implode(' | ', array_filter([!empty($company['tel']) ? 'Tel: ' . $company['tel'] : '', !empty($company['email']) ? 'Email: ' . $company['email'] : '']));
-    k_text($s, cm(1.0), $y + cm(0.1), $sw - cm(5), cm(0.4), implode(' | ', $parts), 7, false, C_GREY, 'l', 't', 1.0);
-    if ($contact) k_text($s, cm(1.0), $y + cm(0.45), $sw - cm(5), cm(0.4), $contact, 7, false, C_GREY, 'l', 't', 1.0);
+    k_logo($s, cm(1.0), $y + cm(0.42), cm(2.1), 'color');
+    k_text($s, cm(3.4), $y + cm(0.1), $sw - cm(7.4), cm(0.4), implode(' | ', $parts), 7, false, C_GREY, 'l', 't', 1.0);
+    if ($contact) k_text($s, cm(3.4), $y + cm(0.45), $sw - cm(7.4), cm(0.4), $contact, 7, false, C_GREY, 'l', 't', 1.0);
     k_text($s, $sw - cm(4), $y + cm(0.1), cm(3), cm(0.4), "$page / $total", 8, true, C_NAVY, 'r', 't', 1.0);
 }
