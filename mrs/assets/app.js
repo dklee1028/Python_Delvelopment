@@ -1144,24 +1144,11 @@ async function pageUsers(v) {
   const deptOpts = (sel) => `<option value="">부서 없음</option>${depts.map((d) => `<option value="${d.id}" ${sel === d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}`;
   const deptCell = (u) => admin ? `<select class="small" data-dept="${u.id}" style="width:auto">${deptOpts(u.dept_id)}</select>` : esc(u.dept_name || "-");
   const fDept = S.userDept || "";
-  const leaders = users.filter((x) => x.is_active && ["manager", "admin"].includes(x.role));
-  const teamCell = (u) => {
-    let h = "";
-    if (admin && u.role !== "admin") h = `<select class="small" data-team="${u.id}" style="width:auto"><option value="">팀 없음</option>${leaders.filter((l) => l.id !== u.id).map((l) => `<option value="${l.id}" ${u.leader_id === l.id ? "selected" : ""}>${esc(l.full_name || l.username)} 팀</option>`).join("")}</select>`;
-    else h = u.leader_name ? `${esc(u.leader_name)} 팀` : '<span class="muted">-</span>';
-    if (u.team_size) h += ` <span class="chip gray" style="font-size:10px">팀원 ${u.team_size}명</span>`;
-    if (leader && u.id !== S.me.id && !["admin", "manager"].includes(u.role)) {
-      if (u.leader_id === S.me.id) h += ` <button class="btn sm" data-tm="${u.id}" data-to="">팀에서 빼기</button>`;
-      else if (!u.leader_id) h += ` <button class="btn sm primary" data-tm="${u.id}" data-to="${S.me.id}">내 팀으로</button>`;
-    }
-    return h;
-  };
   const mine = (u) => admin || (leader && u.leader_id === S.me.id);
   v.innerHTML = `<div class="card"><div class="row"><h3 style="margin:0">사용자</h3>${admin ? '<button class="btn primary sm right" id="new-u">＋ 사용자 등록</button>' : ""}</div>
-    ${leader ? '<p class="small muted" style="margin:8px 0 0">팀장은 소속 팀이 없는 엔지니어를 [내 팀으로] 넣을 수 있고, 팀원의 고객 담당(정/부)과 보고서 현황을 볼 수 있습니다. 다른 팀 소속을 바꾸려면 관리자에게 요청하세요.</p>' : ""}
     <div class="row small" style="margin-top:10px;gap:6px"><span class="muted">부서</span><select id="u-df" style="width:auto"><option value="">전체</option>${depts.map((d) => `<option value="${d.id}" ${String(d.id) === String(fDept) ? "selected" : ""}>${esc(d.name)} (${d.users})</option>`).join("")}<option value="none" ${fDept === "none" ? "selected" : ""}>부서 없음</option></select></div>
-    <table class="t" style="margin-top:8px"><thead><tr><th>아이디</th><th>이름</th><th>부서</th><th>역할</th><th>팀</th><th>연락처</th><th>담당 고객</th><th>권한</th><th>최근 로그인</th><th></th></tr></thead><tbody>
-    ${users.filter((u) => !fDept || (fDept === "none" ? !u.dept_id : String(u.dept_id) === String(fDept))).map((u) => `<tr style="${u.is_active ? "" : "opacity:.5"}"><td class="mono">${esc(u.username)}</td><td><b>${esc(u.full_name)}</b> <span class="small muted">${esc(u.title)}</span></td><td class="small">${deptCell(u)}</td><td>${chip(u.role === "admin" ? "critical" : u.role === "manager" ? "warning" : u.role === "engineer" ? "sent" : "gray", u.role_label)}</td><td class="small" style="white-space:nowrap">${teamCell(u)}</td>
+    <table class="t" style="margin-top:8px"><thead><tr><th>아이디</th><th>이름</th><th>부서</th><th>역할</th><th>연락처</th><th>담당 고객</th><th>권한</th><th>최근 로그인</th><th></th></tr></thead><tbody>
+    ${users.filter((u) => !fDept || (fDept === "none" ? !u.dept_id : String(u.dept_id) === String(fDept))).map((u) => `<tr style="${u.is_active ? "" : "opacity:.5"}"><td class="mono">${esc(u.username)}</td><td><b>${esc(u.full_name)}</b> <span class="small muted">${esc(u.title)}</span></td><td class="small">${deptCell(u)}</td><td>${chip(u.role === "admin" ? "critical" : u.role === "manager" ? "warning" : u.role === "engineer" ? "sent" : "gray", u.role_label)}</td>
       <td class="small">${esc(u.email)}<br>${esc(u.phone)}</td><td class="small"><a href="#/customers" data-uc="${u.id}">정 ${u.assigned.main} · 부 ${u.assigned.sub}</a></td><td class="small">${u.permissions.length}/${Object.keys(cat.permissions).length}</td><td class="small muted">${esc((u.last_login_at || "").replace("T", " ").slice(0, 16))}</td>
       <td style="white-space:nowrap">${admin ? `<button class="btn sm" data-eu="${u.id}">수정</button>` : ""}${mine(u) && u.assigned.main + u.assigned.sub ? `<button class="btn sm" data-tr="${u.id}">담당 이관</button>` : ""}${admin && u.id !== S.me.id ? `<button class="btn sm danger" data-ru="${u.id}">삭제</button>` : ""}</td></tr>`).join("")}</tbody></table></div>
     ${admin ? `<div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">부서 설정</h3><span class="small muted">사용자를 부서에 배정하면 대시보드에서 부서별 장비 현황을 볼 수 있습니다.</span></div>
@@ -1202,9 +1189,6 @@ async function pageUsers(v) {
     });
   };
   $("#new-u") && ($("#new-u").onclick = () => form(null));
-  const setTeam = async (uid, lid) => { try { await api(`users/${uid}/team`, { method: "POST", body: { leader_id: lid ? +lid : null } }); toast(lid ? "팀을 지정했습니다." : "팀에서 뺐습니다.", "ok"); route(); } catch (e) { toast(e.message, "err"); route(); } };
-  $$("[data-team]", v).forEach((sel) => sel.onchange = () => setTeam(sel.dataset.team, sel.value));
-  $$("[data-tm]", v).forEach((b) => b.onclick = () => setTeam(b.dataset.tm, b.dataset.to));
   $$("[data-uc]", v).forEach((a) => a.onclick = () => { S.custScope = "user:" + a.dataset.uc; });
   // 담당 이관: 정/부 배정만 옮기고, 고객의 장비·로그·보고서는 그대로 둡니다.
   $$("[data-tr]", v).forEach((b) => b.onclick = () => {
