@@ -61,10 +61,13 @@ function smtp_session($host, $port, $sec, $user, $pass, $from, $rcpts, $msg) {
     } finally { @fclose($fp); }
 }
 function enc_hdr($s) { return preg_match('/[^\x20-\x7e]/', $s) ? '=?UTF-8?B?' . base64_encode($s) . '?=' : $s; }
+/* 회신 주소: 공용 주소(support@)로 보내도 고객이 [회신]하면 담당 엔지니어에게 가도록 */
+function mail_reply_to($set = null) { static $v = ''; if ($set !== null) $v = filter_var($set, FILTER_VALIDATE_EMAIL) ? $set : ''; return $v; }
 function mime_build($from, $fromName, $to, $cc, $subject, $text, $html, $attachments) {
     $b1 = 'mrs_m_' . bin2hex(random_bytes(8)); $b2 = 'mrs_a_' . bin2hex(random_bytes(8));
     $h = ['Date: ' . date('r'), 'From: ' . enc_hdr($fromName) . " <$from>", 'To: ' . implode(', ', $to)];
     if ($cc) $h[] = 'Cc: ' . implode(', ', $cc);
+    if (($rt = mail_reply_to()) && strcasecmp($rt, $from) !== 0) $h[] = "Reply-To: $rt";
     $h[] = 'Subject: ' . enc_hdr($subject);
     $h[] = 'Message-ID: <' . bin2hex(random_bytes(10)) . '@' . (substr(strrchr($from, '@'), 1) ?: 'mrs') . '>';
     $h[] = 'MIME-Version: 1.0';
@@ -159,6 +162,7 @@ function graph_send($to, $cc, $subject, $text, $html, $attachments) {
     $rcpt = function ($list) { return array_map(function ($a) { return ['emailAddress' => ['address' => $a]]; }, array_values($list)); };
     $msg = ['subject' => $subject, 'body' => ['contentType' => 'HTML', 'content' => $html !== '' ? $html : nl2br(htmlspecialchars($text))], 'toRecipients' => $rcpt($to)];
     if ($cc) $msg['ccRecipients'] = $rcpt($cc);
+    if (($rt = mail_reply_to()) && strcasecmp($rt, $from) !== 0) $msg['replyTo'] = $rcpt([$rt]);
     if ($att) $msg['attachments'] = $att;
     $token = m365_token();
     [$code, $res] = m365_http(m365_base('graph') . '/v1.0/users/' . rawurlencode($from) . '/sendMail',

@@ -932,6 +932,7 @@ route('POST', 'reports/(\d+)/send', function ($id) use ($in) {
         . '<br>첨부: ' . $h(implode(', ', array_column($files, 'filename'))) . '</div></div>';
     $text = $msg . ($sig ? "\n\n-- \n$sig\n$company" : '');
     $status = 'sent'; $err = '';
+    mail_reply_to($eng['email'] ?: ($me['email'] ?? '')); // 고객이 회신하면 담당 엔지니어에게
     try { mail_send($to, $cc, $subject, $text, $html, array_map(function ($f) { return [$f['filename'], data_dir() . '/' . $f['stored_path']]; }, $files)); upd('mrs_report', ['status' => 'sent', 'sent_at' => now()], $id); }
     catch (Throwable $e) { $status = 'failed'; $err = $e->getMessage(); }
     ins('mrs_mail_log', ['report_id' => (int)$id, 'recipients' => je($to), 'cc' => je($cc), 'subject' => $subject, 'status' => $status, 'error' => $err, 'sent_by' => $me['id'], 'created_at' => now()]);
