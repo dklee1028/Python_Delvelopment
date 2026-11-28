@@ -169,8 +169,11 @@ let deferredInstall = null;
 addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredInstall = e; const b = $("#install-btn"); if (b) b.hidden = false; });
 addEventListener("hashchange", () => route());
 
+// 'MRS 오프라인 수집기' 파일(HTML 한 개)로 열었을 때: 서버 없이 수집함만 씁니다
+const SA = window.MRS_STANDALONE || null;
 async function boot() {
   try { document.documentElement.dataset.theme = localStorage.getItem("mrs-theme") || "light"; } catch (_) {}
+  if (SA) { S.me = SA.me; S.offline = true; S.standalone = true; OFF.persist(); return render(); }
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   try { S.me = await api("auth/me"); OFF.saveMe(); }
   catch (e) {
@@ -196,7 +199,7 @@ function render() {
         <h2 id="page-title">MRS</h2>
         <div class="right row">
           ${can("log.upload") ? '<a class="btn sm" id="col-btn" href="#/collect">📥 수집함</a>' : ""}
-          <button class="btn sm install" id="install-btn" ${deferredInstall ? "" : "hidden"}>⬇ 내 PC에 MRS 설치</button>
+          ${S.standalone ? "" : `<button class="btn sm install" id="install-btn" ${deferredInstall ? "" : "hidden"}>⬇ 내 PC에 MRS 설치</button>`}
           <button class="btn sm ghost" id="theme-btn" title="테마">🌓</button>
           <span class="chip gray">${esc(S.me.full_name || S.me.username)} · ${esc(S.me.role_label)}</span>
           ${S.offline ? '<span class="chip warning">오프라인</span>' : '<button class="btn sm" id="pw-btn">비밀번호</button><button class="btn sm" id="logout-btn">로그아웃</button>'}
@@ -208,11 +211,12 @@ function render() {
   $("#burger").onclick = () => $("#side").classList.toggle("open");
   $("#logout-btn") && ($("#logout-btn").onclick = async () => { await api("auth/logout", { method: "POST" }); S.me = null; try { localStorage.removeItem("mrs-off-me"); } catch (_) {} render(); });
   $("#theme-btn").onclick = () => { const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; document.documentElement.dataset.theme = t; try { localStorage.setItem("mrs-theme", t); } catch (_) {} };
-  $("#install-btn").onclick = async () => { if (!deferredInstall) return toast("브라우저 메뉴 › '앱 설치'를 이용하세요."); deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; $("#install-btn").hidden = true; };
+  $("#install-btn") && ($("#install-btn").onclick = async () => { if (!deferredInstall) return toast("브라우저 메뉴 › '앱 설치'를 이용하세요."); deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; $("#install-btn").hidden = true; });
   $("#pw-btn") && ($("#pw-btn").onclick = changePassword);
   updateCollectBadge();
   route();
   if (S.offline) return;
+  OFF.prep();
   if (S.me.must_change_pw) setTimeout(() => { toast("임시 비밀번호로 로그인했습니다. 비밀번호를 바꿔 주세요."); changePassword(); }, 400);
   else if (S.me.pw_expired) setTimeout(pwExpired, 400);
   if (!localStorage.getItem("mrs-install-hint") && !matchMedia("(display-mode: standalone)").matches) {
@@ -1277,7 +1281,31 @@ const OFF = {
   list() { return this.tx("readonly", (s) => s.getAll()).then((x) => (x || []).sort((a, b) => b.id - a.id)); },
   async count() { try { return (await this.list()).length; } catch (_) { return 0; } },
   // 담당 고객·장비·관리 IP·명령어 (온라인일 때 받아 두고, 오프라인에서 꺼내 씀)
-  cat() { try { return JSON.parse(localStorage.getItem("mrs-off-cat") || "null"); } catch (_) { return null; } },
+  cat() { if (SA) return SA.cat; try { return JSON.parse(localStorage.getItem("mrs-off-cat") || "null"); } catch (_) { return null; } },
+  // 브라우저가 저장 공간이 부족할 때 수집함을 지우지 않도록 '영구 보관'을 요청
+  persist() { try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (_) {} },
+  // 온라인으로 로그인할 때마다 장비 목록·명령어를 미리 받아 둡니다 → 내부망에서 바로 수집 가능
+  prep() { if (S.prepped || !can("log.upload")) return; S.prepped = true; this.persist(); this.refresh(S.colScope).catch(() => {}); },
+  // 수집함 → 파일 한 개(.mrsbox): "MRSBOX1 <목록 바이트 수>\n" + 목록(JSON) + 파일 내용을 차례로 이어 붙임
+  async exportBox(items) {
+    const meta = items.map(({ blob, id, ...m }) => ({ ...m, size: blob.size, mime: blob.type || "" }));
+    const head = new TextEncoder().encode(JSON.stringify({ v: 1, by: S.me.full_name || S.me.username, made_at: nowLocal(), items: meta }));
+    return new Blob([`MRSBOX1 ${head.length}\n`, head, ...items.map((it) => it.blob)], { type: "application/octet-stream" });
+  },
+  async importBox(file) {
+    const first = await file.slice(0, 40).text(); const m = first.match(/^MRSBOX1 (\d+)\n/);
+    if (!m) throw new Error("MRS 수집함 파일(.mrsbox)이 아닙니다.");
+    let pos = m[0].length; const head = JSON.parse(await file.slice(pos, pos + +m[1]).text()); pos += +m[1];
+    const have = new Set((await this.list()).map((x) => [x.eid, x.name, x.collected_at, x.size].join("|")));
+    let added = 0, skip = 0;
+    for (const it of head.items) {
+      const blob = file.slice(pos, pos + it.size, it.mime || "application/octet-stream"); pos += it.size;
+      if (blob.size !== it.size) throw new Error("파일이 중간에 잘렸습니다. 다시 내보내 주세요.");
+      if (have.has([it.eid, it.name, it.collected_at, it.size].join("|"))) { skip++; continue; }
+      const { mime, ...rest } = it; await this.add({ ...rest, blob: new Blob([blob], { type: mime || "application/octet-stream" }) }); added++;
+    }
+    return { added, skip, by: head.by, made_at: head.made_at };
+  },
   async refresh(scope) {
     const c = await api("collect/catalog" + (scope ? "?scope=" + scope : ""));
     try { localStorage.setItem("mrs-off-cat", JSON.stringify(c)); } catch (_) {}
@@ -1316,9 +1344,11 @@ async function pageCollect(v, arg) {
   const script = (cat.cmd_scripts || {})[st.type] || "";
   try { localStorage.setItem("mrs-off-sel", JSON.stringify(st)); } catch (_) {}
   const online = !S.offline && navigator.onLine;
-  v.innerHTML = `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><b>${online ? "🟢 인터넷 연결됨" : "🟠 오프라인 (내부망)"}</b>
+  v.innerHTML = `${S.standalone ? `<div class="card" style="margin-bottom:12px;border-left:4px solid var(--amber)"><b>💻 MRS 오프라인 수집기</b> <span class="small muted">${esc(SA.me.full_name || SA.me.username)} · 장비 목록 ${esc(SA.cat.at || "-")} 기준</span>
+      <p class="small" style="margin:6px 0 0">인터넷 없이 이 파일만으로 수집합니다. 수집이 끝나면 아래 수집함의 <b>[💾 파일로 내보내기]</b>로 .mrsbox 파일을 만들고, 인터넷 되는 PC의 MRS <b>[오프라인 수집함] › [📂 파일 가져오기]</b> → <b>[모두 올리기]</b> 하세요. 장비가 새로 생기면 MRS에서 수집기 파일을 다시 받으세요.</p></div>` : ""}
+  <div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><b>${online ? "🟢 인터넷 연결됨" : "🟠 오프라인 (내부망)"}</b>
       <span class="small muted">장비 목록 기준 ${esc(cat.at || "-")}${S.offline ? " · 수집만 가능, 올리기는 인터넷 연결 후" : ""}</span>
-      ${online ? `<label class="small row right" style="gap:6px"><input type="checkbox" id="col-all" ${S.colScope === "all" ? "checked" : ""}> 담당 아닌 고객도 보기</label>` : ""}</div>
+      ${online ? `<label class="small row right" style="gap:6px"><input type="checkbox" id="col-all" ${S.colScope === "all" ? "checked" : ""}> 담당 아닌 고객도 보기</label><button class="btn sm" id="col-sa" title="인터넷이 없는 PC에서도 열리는 수집 전용 파일(HTML 1개)">💻 오프라인 수집기 파일 받기</button>` : ""}</div>
     <p class="small muted" style="margin:8px 0 0">① 고객·장비와 <b>정기점검/특별점검</b>을 고르면 그 장비의 관리 IP와 명령어가 나옵니다. ② PuTTY 등으로 접속해 명령어를 실행하고 ③ 출력 전체를 붙여 넣거나 저장한 파일·perf_archive.7z 를 넣어 [수집함에 담기]. 수집한 내용은 <b>이 PC 브라우저에만</b> 보관되며, 인터넷이 되는 곳에서 [올리기] 하면 장비별 로그·성능 아카이브로 들어갑니다.</p></div>
   <div class="grid g2" style="margin-top:14px;align-items:start">
     <div class="card"><h3>1. 장비 · 점검 종류</h3>
@@ -1336,7 +1366,7 @@ async function pageCollect(v, arg) {
       <div id="col-files" class="small" style="margin-top:6px"></div>
       <div class="actions"><button class="btn primary" id="col-add" ${eq ? "" : "disabled"}>📥 수집함에 담기</button></div></div>
   </div>
-  <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">수집함 (이 PC에 보관 중)</h3><span class="right"></span>${online ? '<button class="btn primary sm" id="col-upall">⬆ 모두 올리기</button>' : ""}</div><div id="col-list" style="margin-top:10px"></div></div>`;
+  <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">수집함 (이 PC에 보관 중)</h3><span class="right"></span><button class="btn sm" id="col-ex">💾 파일로 내보내기</button><button class="btn sm" id="col-im">📂 파일 가져오기</button><input type="file" id="col-imf" accept=".mrsbox" multiple hidden>${online ? '<button class="btn primary sm" id="col-upall">⬆ 모두 올리기</button>' : ""}</div><div id="col-list" style="margin-top:10px"></div></div>`;
   let picked = [];
   const showPicked = () => { $("#col-files").innerHTML = picked.map((f, i) => `<div class="file-row"><span class="grow">${isPerfFile(f) ? "📈" : "📄"} ${esc(f.name)} <span class="muted">${fmtSize(f.size)}</span></span><button class="btn sm" data-px="${i}">빼기</button></div>`).join("");
     $$("[data-px]", v).forEach((b) => b.onclick = () => { picked.splice(+b.dataset.px, 1); showPicked(); }); };
@@ -1344,6 +1374,18 @@ async function pageCollect(v, arg) {
   $("#col-c").onchange = () => { st.cid = +$("#col-c").value; st.eid = null; pageCollect(v); };
   $("#col-e").onchange = () => { st.eid = +$("#col-e").value; pageCollect(v); };
   $$("[data-ty]", v).forEach((b) => b.onclick = () => { st.type = b.dataset.ty; pageCollect(v); });
+  $("#col-sa") && ($("#col-sa").onclick = (e) => busy(e.target, async () => { await buildStandalone(); toast("수집기 파일을 받았습니다. USB 등으로 내부망 PC에 옮겨 더블클릭하면 열립니다.", "ok"); }));
+  $("#col-ex").onclick = (e) => busy(e.target, async () => {
+    const items = await OFF.list(); if (!items.length) return toast("수집함이 비어 있습니다.", "err");
+    const stamp = nowLocal().replace(/[-:T]/g, "").slice(0, 12);
+    saveBlob(await OFF.exportBox(items.slice().reverse()), `MRS_box_${safeName()}_${stamp}.mrsbox`);
+    if (await confirmBox(`${items.length}건을 파일로 내보냈습니다. 파일이 제대로 저장된 것을 확인했다면, 이 PC 수집함에서 지울까요? (지우지 않아도 됩니다)`, "지우기")) { for (const it of items) await OFF.del(it.id); listItems(); updateCollectBadge(); }
+  });
+  $("#col-im").onclick = () => $("#col-imf").click();
+  $("#col-imf").onchange = async (e) => {
+    for (const f of [...e.target.files]) { try { const r = await OFF.importBox(f); toast(`${f.name}: ${r.added}건 가져옴${r.skip ? ` · 이미 있는 ${r.skip}건 건너뜀` : ""} (${r.by || "-"} · ${r.made_at || ""})`, "ok"); } catch (err) { toast(`${f.name}: ${err.message}`, "err"); } }
+    e.target.value = ""; listItems(); updateCollectBadge();
+  };
   $("#col-all") && ($("#col-all").onchange = () => { S.colScope = $("#col-all").checked ? "all" : ""; pageCollect(v); });
   $("#col-cp").onclick = async () => { try { await navigator.clipboard.writeText(script); } catch (_) { $("#col-sc").select(); document.execCommand("copy"); } toast("명령어를 복사했습니다.", "ok"); };
   $("#col-add").onclick = async () => {
@@ -1384,10 +1426,31 @@ async function pageCollect(v, arg) {
 }
 // 오프라인 ↔ 온라인 전환: 인터넷이 다시 되면 로그인 상태를 확인하고 일반 화면으로
 addEventListener("online", async () => {
-  if (!S.offline) return updateCollectBadge();
+  if (!S.offline || S.standalone) return updateCollectBadge();
   try { const me = await api("auth/me"); S.me = me; S.offline = false; toast("인터넷에 연결되었습니다. 수집함 자료를 올릴 수 있습니다.", "ok"); render(); }
   catch (e) { if (!(e instanceof TypeError)) { S.offline = false; S.me = null; render(); } }
 });
 addEventListener("offline", () => updateCollectBadge());
+// 파일 이름은 영문·숫자만 (한글 이름은 일부 브라우저에서 'download'로 바뀌어 저장됨)
+const safeName = () => String(S.me.username || "user").replace(/[^A-Za-z0-9_.-]/g, "") || "user";
+function saveBlob(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+// 오프라인 수집기: 화면(css·js)·로고·내 장비 목록·명령어를 HTML 파일 한 개로 묶어 내려받기 (서버·인터넷 없이 더블클릭으로 열림)
+async function buildStandalone() {
+  const cat = await OFF.refresh(S.colScope);
+  const get = async (u) => { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error(`${u} 를 읽지 못했습니다 (${r.status})`); return r; };
+  const uri = async (u) => { const b = await (await get(u)).blob(); return new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(b); }); };
+  const [css, js, logo, icon] = await Promise.all([get("assets/app.css").then((r) => r.text()), get("assets/app.js").then((r) => r.text()), uri("assets/img/logo_color.png"), uri("assets/icons/mrs-192.png")]);
+  const me = { id: S.me.id, username: S.me.username, full_name: S.me.full_name, role_label: S.me.role_label, permissions: S.me.permissions };
+  const data = JSON.stringify({ me, cat }).replace(/</g, "\\u003c");
+  const code = js.split("assets/img/logo_color.png").join(logo).split("assets/icons/mrs-192.png").join(icon).replace(/<\/script/gi, "<\\/script");
+  const name = (S.me.full_name || S.me.username || "").replace(/[\\/:*?"<>|\s]/g, "");
+  const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MRS 오프라인 수집기 · ${esc(name)}</title><link rel="icon" href="${icon}"><style>${css}</style></head>
+<body><div id="app"></div><div id="toasts" aria-live="polite"></div><div id="modal-root"></div><canvas id="confetti" aria-hidden="true"></canvas>
+<script>window.MRS_STANDALONE=${data};<\/script><script>${code}<\/script></body></html>`;
+  saveBlob(new Blob([html], { type: "text/html;charset=utf-8" }), `MRS_collector_${safeName()}_${nowLocal().slice(0, 10).replace(/-/g, "")}.html`);
+}
 
 boot();
