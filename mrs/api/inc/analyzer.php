@@ -12,6 +12,13 @@ function old_ontap($v) {
     return preg_match('/(\d+)\.(\d+)/', $v, $m) && [(int)$m[1], (int)$m[2]] < [9, 8];
 }
 
+/* 진단 항목의 고유 키: 구분|제목 (숫자는 #으로 바꿔 사용률·건수가 달라져도 같은 항목으로 봄) */
+function finding_key($f) { return mb_substr(($f['category'] ?? '') . '|' . preg_replace('/\d+(\.\d+)?/', '#', (string)($f['title'] ?? '')), 0, 300); }
+/* 장비에 적용할 무시 규칙: 이 장비 전용 + 모든 장비 공통 */
+function ignore_rules_for($eid) {
+    if (!has_table('mrs_ignore_rule')) return [];
+    return all("SELECT id, equipment_id, rule_key, title, reason FROM mrs_ignore_rule WHERE equipment_id IS NULL" . ($eid ? " OR equipment_id=?" : ''), $eid ? [(int)$eid] : []);
+}
 function analyze($eq, $p, $extra = []) {
     $f = array_values((array)$extra); // 성능 아카이브 판정 등 외부 진단
     $add = function ($sev, $cat, $title, $detail, $rec) use (&$f) { $f[] = ['severity' => $sev, 'category' => $cat, 'title' => $title, 'detail' => $detail, 'recommendation' => $rec]; };
@@ -57,6 +64,11 @@ function analyze($eq, $p, $extra = []) {
     if (array_key_exists('autosupport', $p) && $p['autosupport'] === false) $add('warning', '시스템', 'AutoSupport 비활성화',
         '장애 발생 시 벤더 사전 감지 및 부품 자동 발송이 불가합니다.', 'AutoSupport 활성화를 권장합니다.');
 
+    // 미리 설정한 '무시' 항목은 판정·점수에서 빼고 따로 보관 (보고서에는 '무시 설정 항목'으로만 표시)
+    $rules = []; foreach ((array)($eq['ignore'] ?? []) as $r) $rules[$r['rule_key']] = $r;
+    $ign = []; $keep = [];
+    foreach ($f as $x) { $x['key'] = finding_key($x); if (isset($rules[$x['key']]) && $x['severity'] !== 'info') { $x['ignored'] = ['id' => (int)$rules[$x['key']]['id'], 'reason' => $rules[$x['key']]['reason'] ?? '', 'all' => $rules[$x['key']]['equipment_id'] === null]; $ign[] = $x; } else $keep[] = $x; }
+    $f = $keep;
     usort($f, function ($a, $b) { return SEV_ORDER[$a['severity']] <=> SEV_ORDER[$b['severity']]; });
     $cnt = ['critical' => 0, 'warning' => 0, 'info' => 0];
     foreach ($f as $x) $cnt[$x['severity']]++;
@@ -65,7 +77,7 @@ function analyze($eq, $p, $extra = []) {
     $status = $cnt['critical'] ? 'critical' : ($cnt['warning'] ? 'warning' : 'normal');
     $total = 0; $used = 0;
     foreach ($p['aggregates'] ?? [] as $a) if (!is_root_aggr($a['name'])) { $total += $a['total_gb']; $used += $a['used_gb']; }
-    return ['findings' => $f, 'score' => $score, 'status' => $status, 'status_label' => STATUS_LONG[$status],
+    return ['findings' => $f, 'ignored' => $ign, 'score' => $score, 'status' => $status, 'status_label' => STATUS_LONG[$status],
         'capacity' => ['total_gb' => $total, 'used_gb' => $used, 'pct' => $total ? (int)round($used / $total * 100) : 0], 'counts' => $cnt];
 }
 /* 로그에서 찾은 이상 중 육안으로도 보이는 것 → 육안 점검 항목 자동 '비정상' 제안 (엔지니어가 최종 확인) */

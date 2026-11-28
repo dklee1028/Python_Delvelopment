@@ -82,6 +82,8 @@ function user_out($u) {
     return ['id' => (int)$u['id'], 'username' => $u['username'], 'full_name' => $u['full_name'] ?: '', 'email' => $u['email'] ?: '', 'phone' => $u['phone'] ?: '', 'title' => $u['title'] ?: '',
         'role' => $u['role'], 'role_label' => ROLE_LABELS[$u['role']] ?? $u['role'], 'permissions' => effective_perms($u), 'overrides' => (object)jd($u['permissions'], []),
         'is_active' => (bool)(int)$u['is_active'], 'must_change_pw' => (bool)(int)$u['must_change_pw'], 'last_login_at' => $u['last_login_at'],
+        'dept_id' => empty($u['dept_id']) ? null : (int)$u['dept_id'], 'dept_name' => empty($u['dept_id']) ? '' : (string)val("SELECT name FROM mrs_dept WHERE id=?", [$u['dept_id']]),
+        'pw_due_at' => $u['pw_due_at'] ?? null, 'pw_expired' => !empty($u['pw_due_at']) && $u['pw_due_at'] <= now(),
         'leader_id' => empty($u['leader_id']) ? null : (int)$u['leader_id'], 'leader_name' => empty($u['leader_id']) ? '' : (string)val("SELECT COALESCE(NULLIF(full_name,''), username) FROM mrs_user WHERE id=?", [$u['leader_id']]),
         'team_size' => (int)val("SELECT COUNT(*) FROM mrs_user WHERE leader_id=? AND is_active=1", [$u['id']]),
         'assigned' => ['main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$u['id']]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='sub'", [$u['id']])]];
@@ -100,12 +102,24 @@ route('POST', 'auth/login', function () use ($in) {
     out(user_out(one("SELECT * FROM mrs_user WHERE id=?", [$u['id']])));
 });
 route('POST', 'auth/logout', function () { $_SESSION = []; session_destroy(); out(['ok' => true]); });
-route('GET', 'auth/me', function () { out(user_out(need_login())); });
+const PW_DAYS = 90; // 비밀번호 변경 주기 (3개월)
+function pw_next_due() { return date('Y-m-d H:i:s', time() + PW_DAYS * 86400); }
+route('GET', 'auth/me', function () {
+    $u = need_login();
+    if (empty($u['pw_due_at'])) { upd('mrs_user', ['pw_due_at' => pw_next_due()], $u['id']); $u = one("SELECT * FROM mrs_user WHERE id=?", [$u['id']]); }
+    out(user_out($u));
+});
+// 3개월 변경 요청을 원치 않으면 3개월 뒤로 미룸
+route('POST', 'auth/password-postpone', function () {
+    $u = need_login(); if ((int)$u['must_change_pw']) fail('임시 비밀번호는 미룰 수 없습니다. 비밀번호를 바꿔 주세요.');
+    upd('mrs_user', ['pw_due_at' => pw_next_due()], $u['id']); audit('password.postpone', $u['username']);
+    out(user_out(one("SELECT * FROM mrs_user WHERE id=?", [$u['id']])));
+});
 route('POST', 'auth/password', function () use ($in) {
     $u = need_login();
     if (!password_verify((string)($in['current'] ?? ''), $u['password_hash'])) fail('현재 비밀번호가 올바르지 않습니다.');
     if ($e = pw_check((string)($in['new'] ?? ''))) fail($e);
-    upd('mrs_user', ['password_hash' => password_hash($in['new'], PASSWORD_DEFAULT), 'must_change_pw' => 0, 'updated_at' => now()], $u['id']);
+    upd('mrs_user', ['password_hash' => password_hash($in['new'], PASSWORD_DEFAULT), 'must_change_pw' => 0, 'pw_due_at' => pw_next_due(), 'updated_at' => now()], $u['id']);
     audit('password.change', $u['username']);
     out(['ok' => true]);
 });
@@ -118,6 +132,7 @@ function user_save($id, $in) {
     $ov = []; foreach ((array)($in['overrides'] ?? []) as $k => $v) if (isset(PERMISSIONS[$k])) $ov[$k] = (bool)$v;
     $d = ['full_name' => s($in['full_name'] ?? '', 100), 'email' => s($in['email'] ?? '', 200), 'phone' => s($in['phone'] ?? '', 50), 'title' => s($in['title'] ?? '', 50),
         'role' => $role, 'permissions' => je((object)$ov), 'is_active' => b($in['is_active'] ?? true) ? 1 : 0, 'updated_at' => now()];
+    if (array_key_exists('dept_id', $in)) { $dp = (int)$in['dept_id'] ?: null; if ($dp && !one("SELECT id FROM mrs_dept WHERE id=?", [$dp])) fail('부서를 찾을 수 없습니다.'); $d['dept_id'] = $dp; }
     if ($d['email'] && !filter_var($d['email'], FILTER_VALIDATE_EMAIL)) fail('이메일 형식이 올바르지 않습니다.');
     $pw = (string)($in['password'] ?? '');
     if ($id === null) {
@@ -136,6 +151,61 @@ function user_save($id, $in) {
     }
     out(user_out(one("SELECT * FROM mrs_user WHERE id=?", [$id])));
 }
+/* ----- 부서 ----- */
+function dept_list() { return array_map(function ($d) { return ['id' => (int)$d['id'], 'name' => $d['name'], 'sort_no' => (int)$d['sort_no'], 'users' => (int)val("SELECT COUNT(*) FROM mrs_user WHERE dept_id=? AND is_active=1", [$d['id']])]; }, all("SELECT * FROM mrs_dept ORDER BY sort_no, name")); }
+route('GET', 'depts', function () { need_login(); out(dept_list()); });
+route('POST', 'users/(\d+)/dept', function ($id) use ($in) {
+    need('user.manage'); if (!one("SELECT id FROM mrs_user WHERE id=?", [$id])) fail('사용자를 찾을 수 없습니다.', 404);
+    $dp = (int)($in['dept_id'] ?? 0) ?: null; if ($dp && !one("SELECT id FROM mrs_dept WHERE id=?", [$dp])) fail('부서를 찾을 수 없습니다.');
+    q("UPDATE mrs_user SET dept_id=? WHERE id=?", [$dp, $id]); audit('user.dept', "#$id", $dp ? (string)val("SELECT name FROM mrs_dept WHERE id=?", [$dp]) : '(없음)'); out(['ok' => true]);
+});
+route('POST', 'depts', function () use ($in) {
+    need('user.manage'); $n = s($in['name'] ?? '', 100); if ($n === '') fail('부서 이름을 입력하세요.');
+    if (one("SELECT id FROM mrs_dept WHERE name=?", [$n])) fail('이미 있는 부서입니다.');
+    ins('mrs_dept', ['name' => $n, 'sort_no' => (int)($in['sort_no'] ?? 0), 'created_at' => now()]); audit('dept.create', $n); out(dept_list());
+});
+route('PUT', 'depts/(\d+)', function ($id) use ($in) {
+    need('user.manage'); if (!one("SELECT id FROM mrs_dept WHERE id=?", [$id])) fail('부서를 찾을 수 없습니다.', 404);
+    $n = s($in['name'] ?? '', 100); if ($n === '') fail('부서 이름을 입력하세요.');
+    upd('mrs_dept', ['name' => $n, 'sort_no' => (int)($in['sort_no'] ?? 0)], $id); audit('dept.update', $n); out(dept_list());
+});
+route('DELETE', 'depts/(\d+)', function ($id) {
+    need('user.manage'); $d = one("SELECT * FROM mrs_dept WHERE id=?", [$id]); if (!$d) fail('부서를 찾을 수 없습니다.', 404);
+    q("UPDATE mrs_user SET dept_id=NULL WHERE dept_id=?", [$id]); q("DELETE FROM mrs_dept WHERE id=?", [$id]); audit('dept.delete', $d['name']); out(dept_list());
+});
+/* ----- 무시 규칙: 판정에서 뺄 진단 항목. 이 장비 전용(과거·이후 보고서 모두) 또는 모든 장비 ----- */
+function ignore_out($r) {
+    $e = $r['equipment_id'] ? one("SELECT e.name, c.name cname FROM mrs_equipment e JOIN mrs_customer c ON c.id=e.customer_id WHERE e.id=?", [$r['equipment_id']]) : null;
+    return ['id' => (int)$r['id'], 'equipment_id' => $r['equipment_id'] ? (int)$r['equipment_id'] : null, 'equipment_name' => $e['name'] ?? '', 'customer_name' => $e['cname'] ?? '',
+        'key' => $r['rule_key'], 'category' => $r['category'] ?: '', 'title' => $r['title'] ?: '', 'reason' => $r['reason'] ?: '', 'created_by' => user_name($r['created_by']), 'created_at' => substr((string)$r['created_at'], 0, 16)];
+}
+function ignore_changed($eid, $rid) {
+    // 장비 현황(대시보드) 판정을 다시 계산하고, 보고서에서 눌렀으면 그 보고서를 다시 분석
+    q("UPDATE mrs_log_file SET status=NULL" . ($eid ? " WHERE equipment_id=?" : ''), $eid ? [$eid] : []);
+    if ($rid && ($r = one("SELECT * FROM mrs_report WHERE id=?", [$rid]))) run_analysis($r);
+}
+route('GET', 'ignore-rules', function () {
+    need('report.view'); $eid = (int)g('equipment_id', 0);
+    out(array_map('ignore_out', all("SELECT * FROM mrs_ignore_rule" . ($eid ? " WHERE equipment_id=? OR equipment_id IS NULL" : '') . " ORDER BY id DESC", $eid ? [$eid] : [])));
+});
+route('POST', 'ignore-rules', function () use ($in) {
+    $me = need('report.edit'); $eid = (int)($in['equipment_id'] ?? 0) ?: null;
+    if ($eid && !one("SELECT id FROM mrs_equipment WHERE id=?", [$eid])) fail('장비를 찾을 수 없습니다.', 404);
+    if (!$eid && !is_admin_u($me)) fail('모든 장비에 적용하는 무시 규칙은 관리자만 만들 수 있습니다.', 403);
+    $key = s($in['key'] ?? '', 300); if ($key === '') $key = finding_key(['category' => $in['category'] ?? '', 'title' => $in['title'] ?? '']);
+    if ($key === '|') fail('무시할 항목을 고르세요.');
+    $ex = one("SELECT id FROM mrs_ignore_rule WHERE rule_key=? AND " . ($eid ? "equipment_id=?" : "equipment_id IS NULL"), $eid ? [$key, $eid] : [$key]);
+    if (!$ex) ins('mrs_ignore_rule', ['equipment_id' => $eid, 'rule_key' => $key, 'category' => s($in['category'] ?? '', 50), 'title' => s($in['title'] ?? '', 300),
+        'reason' => s($in['reason'] ?? '', 500), 'created_by' => $me['id'], 'created_at' => now()]);
+    audit('ignore.create', s($in['title'] ?? $key, 150), $eid ? "equipment $eid" : '모든 장비');
+    ignore_changed($eid, (int)($in['report_id'] ?? 0)); out(['ok' => true]);
+});
+route('DELETE', 'ignore-rules/(\d+)', function ($id) {
+    $me = need('report.edit'); $r = one("SELECT * FROM mrs_ignore_rule WHERE id=?", [$id]); if (!$r) fail('규칙을 찾을 수 없습니다.', 404);
+    if (!$r['equipment_id'] && !is_admin_u($me)) fail('모든 장비에 적용된 무시 규칙은 관리자만 해제할 수 있습니다.', 403);
+    q("DELETE FROM mrs_ignore_rule WHERE id=?", [$id]); audit('ignore.delete', $r['title'] ?: $r['rule_key']);
+    ignore_changed($r['equipment_id'] ? (int)$r['equipment_id'] : null, (int)g('report_id', 0)); out(['ok' => true]);
+});
 /* ----- 팀: 사용자마다 팀장(leader_id) 1명. 관리자는 전체, 팀장은 본인과 팀원을 관리합니다 ----- */
 function is_admin_u($u) { return $u['role'] === 'admin' || in_array('user.manage', $u['perms'], true); }
 function is_leader_u($u) { return $u['role'] === 'manager'; }
@@ -295,8 +365,10 @@ function cust_assign($cid) {
 }
 /* 로그 상태 요약을 저장해 두고 고객 현황표에서 빠르게 씁니다. */
 function log_stat_fill($where = '1=1', $p = []) {
-    foreach (all("SELECT id, parsed FROM mrs_log_file WHERE status IS NULL AND $where LIMIT 300", $p) as $l) {
-        $pa = jd($l['parsed'], []); $a = $pa ? analyze([], $pa) : ['status' => 'normal', 'findings' => []]; $c = ['critical' => 0, 'warning' => 0];
+    static $rules = [];
+    foreach (all("SELECT id, equipment_id, parsed FROM mrs_log_file WHERE status IS NULL AND $where LIMIT 300", $p) as $l) {
+        $e = (int)$l['equipment_id']; if (!isset($rules[$e])) $rules[$e] = ignore_rules_for($e);
+        $pa = jd($l['parsed'], []); $a = $pa ? analyze(['ignore' => $rules[$e]], $pa) : ['status' => 'normal', 'findings' => []]; $c = ['critical' => 0, 'warning' => 0];
         foreach ($a['findings'] as $f) if (isset($c[$f['severity']])) $c[$f['severity']]++;
         upd('mrs_log_file', ['status' => $a['status'], 'n_crit' => $c['critical'], 'n_warn' => $c['warning']], $l['id']);
     }
@@ -489,6 +561,15 @@ route('GET', 'customers/(\d+)/logs', function ($cid) {
     if ($d = g('date_to')) { $sql .= " AND collected_at<=?"; $p[] = substr($d, 0, 10) . ' 23:59:59'; }
     $names = eq_names($cid);
     out(array_map(function ($l) use ($names) { return log_out($l, $names); }, all("$sql ORDER BY collected_at DESC LIMIT 500", $p)));
+});
+/* 전체 고객의 최근 로그 (대시보드 '보관 로그' 카드) */
+route('GET', 'logs-recent', function () {
+    need('customer.view'); log_stat_fill();
+    $lim = max(1, min(1000, (int)g('limit', 300)));
+    out(array_map(function ($l) { return ['id' => (int)$l['id'], 'customer_id' => (int)$l['customer_id'], 'customer_name' => $l['customer_name'] ?? '', 'equipment_name' => $l['equipment_name'] ?? '',
+        'original_name' => $l['original_name'], 'collected_at' => substr($l['collected_at'], 0, 16), 'status' => $l['status'] ?: 'normal']; },
+        all("SELECT l.id, l.customer_id, l.original_name, l.collected_at, l.status, c.name customer_name, e.name equipment_name FROM mrs_log_file l
+            LEFT JOIN mrs_customer c ON c.id=l.customer_id LEFT JOIN mrs_equipment e ON e.id=l.equipment_id ORDER BY l.collected_at DESC, l.id DESC LIMIT $lim")));
 });
 function log_get($id) { $l = one("SELECT * FROM mrs_log_file WHERE id=?", [$id]); if (!$l) fail('로그를 찾을 수 없습니다.', 404); return $l; }
 route('GET', 'logs/(\d+)', function ($id) { need('customer.view'); $l = log_get($id); $d = log_out($l, eq_names($l['customer_id'])); $p = jd($l['parsed'], []); $d['parsed'] = $p; $d['analysis'] = analyze([], $p); out($d); });
@@ -688,6 +769,23 @@ function team_status($me) {
             'last_login' => $u['last_login_at'] ? substr($u['last_login_at'], 0, 16) : ''];
     }, $users);
 }
+/* 대시보드 장비 현황: 사용 중 장비마다 최신 로그 판정 + 고객 정 담당자(부서) */
+function eq_status_rows($me, $scope) {
+    log_stat_fill();
+    $ids = null;
+    if ($scope === 'mine') $ids = [(int)$me['id']]; elseif ($scope === 'team') $ids = visible_user_ids($me);
+    $rows = all("SELECT e.id, e.name, e.model, e.customer_id, c.name cname, a.user_id, u.full_name, u.username, u.dept_id, d.name dname
+        FROM mrs_equipment e JOIN mrs_customer c ON c.id=e.customer_id
+        LEFT JOIN mrs_customer_assign a ON a.customer_id=e.customer_id AND a.kind='main' LEFT JOIN mrs_user u ON u.id=a.user_id LEFT JOIN mrs_dept d ON d.id=u.dept_id
+        WHERE e.is_active=1 AND e.disposed_at IS NULL" . ($ids !== null ? ' AND a.user_id IN (' . (implode(',', array_map('intval', $ids)) ?: '0') . ')' : '') . " ORDER BY c.name, e.name");
+    $last = []; foreach (all("SELECT l.equipment_id, l.status, l.n_crit, l.n_warn, l.collected_at FROM mrs_log_file l JOIN (SELECT equipment_id, MAX(id) m FROM mrs_log_file WHERE equipment_id IS NOT NULL GROUP BY equipment_id) x ON x.m=l.id") as $l) $last[(int)$l['equipment_id']] = $l;
+    return array_map(function ($r) use ($last) {
+        $l = $last[(int)$r['id']] ?? null;
+        return ['id' => (int)$r['id'], 'name' => $r['name'], 'model' => $r['model'] ?: '', 'customer_id' => (int)$r['customer_id'], 'customer' => $r['cname'],
+            'engineer_id' => $r['user_id'] ? (int)$r['user_id'] : null, 'engineer' => $r['user_id'] ? ($r['full_name'] ?: $r['username']) : '', 'dept' => $r['dname'] ?: '',
+            'status' => $l ? ($l['status'] ?: 'normal') : 'nolog', 'crit' => $l ? (int)$l['n_crit'] : 0, 'warn' => $l ? (int)$l['n_warn'] : 0, 'at' => $l ? substr($l['collected_at'], 0, 10) : ''];
+    }, $rows);
+}
 route('GET', 'dashboard', function () {
     $me = need('report.view'); $scope = g('scope', 'all'); $sc = report_scope_sql($me, $scope);
     $bs = []; foreach (all("SELECT status, COUNT(*) n FROM mrs_report WHERE 1=1$sc GROUP BY status") as $x) $bs[$x['status']] = (int)$x['n'];
@@ -696,7 +794,7 @@ route('GET', 'dashboard', function () {
         'reports' => array_sum($bs), 'this_month' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE inspection_date LIKE ?$sc", [date('Y-m') . '%']), 'by_status' => (object)$bs, 'by_type' => (object)$bt,
         'recent' => array_map('report_brief', all("SELECT * FROM mrs_report WHERE 1=1$sc ORDER BY updated_at DESC, id DESC LIMIT 8")),
         'attention' => array_map('report_brief', all("SELECT * FROM mrs_report WHERE overall_status='critical'$sc ORDER BY updated_at DESC LIMIT 8")),
-        'scope' => $scope, 'can_team' => is_admin_u($me) || is_leader_u($me), 'team' => team_status($me)]);
+        'scope' => $scope, 'can_team' => is_admin_u($me) || is_leader_u($me), 'team' => team_status($me), 'eq_status' => eq_status_rows($me, $scope)]);
 });
 route('GET', 'reports', function () {
     $me = need('report.view'); $sql = "SELECT r.* FROM mrs_report r JOIN mrs_customer c ON c.id=r.customer_id WHERE 1=1" . report_scope_sql($me, g('scope', 'all'), 'r.'); $p = [];

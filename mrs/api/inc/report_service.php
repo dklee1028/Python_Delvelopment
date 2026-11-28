@@ -35,7 +35,7 @@ function run_analysis($r) {
         foreach (['model' => 'model', 'serial' => 'serial', 'os_version' => 'os_version'] as $col => $k) if (!$eq[$col] && !empty($sys[$k])) { $fill[$col] = mb_substr($sys[$k], 0, 100); $eq[$col] = $sys[$k]; }
         if ($fill) upd('mrs_equipment', $fill + ['updated_at' => now()], $eq['id']);
         $extra = array_merge($perf['findings'] ?? [], util_findings($parsed['util'] ?? null), ($parsed['os_mode'] ?? '') === 'cdot' ? cdot_findings((array)($parsed['cdot'] ?? []), $r['report_type']) : []);
-        $a = analyze(['model' => $eq['model'], 'os_version' => $eq['os_version']], $parsed, $extra);
+        $a = analyze(['model' => $eq['model'], 'os_version' => $eq['os_version'], 'ignore' => ignore_rules_for($eq['id'])], $parsed, $extra);
         $a['visual_hints'] = visual_hints($parsed, $a, $perf);
         $out[(string)$eq['id']] = ['parsed' => $parsed, 'analysis' => $a, 'log_ids' => array_map(function ($l) { return (int)$l['id']; }, $mine), 'auto_logs' => $auto, 'perf' => $perf];
         $per[] = $a;

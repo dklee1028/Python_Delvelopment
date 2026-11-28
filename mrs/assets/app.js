@@ -214,6 +214,7 @@ function render() {
   route();
   if (S.offline) return;
   if (S.me.must_change_pw) setTimeout(() => { toast("임시 비밀번호로 로그인했습니다. 비밀번호를 바꿔 주세요."); changePassword(); }, 400);
+  else if (S.me.pw_expired) setTimeout(pwExpired, 400);
   if (!localStorage.getItem("mrs-install-hint") && !matchMedia("(display-mode: standalone)").matches) {
     setTimeout(() => { toast("처음 오셨군요! 상단 '내 PC에 MRS 설치'로 바탕화면에 MRS 아이콘을 만들 수 있습니다."); }, 1200);
     try { localStorage.setItem("mrs-install-hint", "1"); } catch (_) {}
@@ -258,10 +259,18 @@ function renderLogin() {
     catch (err) { toast(err.message, "err"); e.target.animate([{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(0)" }], { duration: 300 }); }
   };
 }
+// 비밀번호 변경 주기(3개월)가 지났을 때: 지금 바꾸거나 3개월 뒤로 미루기
+function pwExpired() {
+  const m = modal(`<h3>🔐 비밀번호 변경 안내</h3><p>비밀번호를 바꾼 지 <b>3개월</b>이 지났습니다. 보안을 위해 새 비밀번호로 바꿔 주세요.</p>
+    <p class="small muted">지금 바꾸지 않으려면 [3개월 뒤에 다시 알림]을 누르세요. 3개월 뒤 다시 안내합니다.</p>
+    <div class="actions"><button class="btn" id="pw-later">3개월 뒤에 다시 알림</button><button class="btn primary" id="pw-now">지금 변경</button></div>`);
+  $("#pw-now", m).onclick = () => { m.remove(); changePassword(); };
+  $("#pw-later", m).onclick = (e) => busy(e.target, async () => { S.me = await api("auth/password-postpone", { method: "POST" }); m.remove(); toast(`다음 안내: ${String(S.me.pw_due_at || "").slice(0, 10)}`, "ok"); });
+}
 function changePassword() {
   const m = modal(`<h3>비밀번호 변경</h3><label class="f">현재 비밀번호</label><input type="password" id="pw-c"><label class="f">새 비밀번호 (8자 이상, 영문+숫자)</label><input type="password" id="pw-n">
     <div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="pw-save">변경</button></div>`);
-  $("#pw-save", m).onclick = (e) => busy(e.target, async () => { await api("auth/password", { method: "POST", body: { current: $("#pw-c", m).value, new: $("#pw-n", m).value } }); m.remove(); S.me.must_change_pw = false; toast("변경되었습니다.", "ok"); });
+  $("#pw-save", m).onclick = (e) => busy(e.target, async () => { await api("auth/password", { method: "POST", body: { current: $("#pw-c", m).value, new: $("#pw-n", m).value } }); m.remove(); S.me.must_change_pw = false; S.me.pw_expired = false; toast("변경되었습니다.", "ok"); });
 }
 
 // ───────────────────────── 대시보드 ─────────────────────────
@@ -272,32 +281,72 @@ async function pageDashboard(v) {
   const hi = hour < 12 ? "좋은 아침입니다" : hour < 18 ? "좋은 오후입니다" : "수고 많으셨습니다";
   const st = d.by_status || {};
   const total = d.reports || 1;
+  const E = d.eq_status || []; S.dashEq = E;
+  const cnt = (rows) => ({ c: rows.filter((x) => x.status === "critical").length, w: rows.filter((x) => x.status === "warning").length, n: rows.filter((x) => x.status === "normal").length, x: rows.filter((x) => x.status === "nolog").length });
+  const all_ = cnt(E);
+  const stack = (k) => { const t = k.c + k.w + k.n + k.x || 1; return `<div class="stack">${[["c", k.c], ["w", k.w], ["n", k.n], ["x", k.x]].map(([c, n]) => n ? `<span class="${c}" style="width:${n / t * 100}%" title="${n}"></span>` : "").join("")}</div>`; };
+  S.dashBy = S.dashBy || "eng";
+  const groups = (by) => { const g = {}; E.forEach((x) => { const k = by === "dept" ? (x.dept || "부서 없음") : (x.engineer || "정 담당 없음"); (g[k] = g[k] || []).push(x); }); return Object.entries(g).sort((a, b) => cnt(b[1]).c - cnt(a[1]).c || cnt(b[1]).w - cnt(a[1]).w || b[1].length - a[1].length); };
+  const ST = { critical: ["위험", "var(--red)"], warning: ["요주의", "var(--amber)"], normal: ["정상", "var(--green)"], nolog: ["로그 없음", "#b8c2ce"] };
   v.innerHTML = `
-  <div class="hero"><div class="wave"></div><h1>${hi}, ${esc(S.me.full_name || S.me.username)}님 👋</h1>
-    <p>이번 달 ${d.this_month}건의 보고서를 작성했습니다. 로그를 끌어다 놓으면 분석부터 보고서까지 한 번에 완성됩니다.</p>
-    <div class="row" style="margin-top:16px">${can("report.create") ? '<a class="btn primary" href="#/new" style="background:#fff;color:var(--navy)">＋ 새 보고서 만들기</a>' : ""}<a class="btn" href="#/reports" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.4)">보고서 관리</a></div></div>
-  <div class="row" style="margin-top:16px"><div class="tabs" style="margin:0;border:0" id="dsc">${[["all", "전체 보고서"], ...(d.can_team ? [["team", "우리 팀"]] : []), ["mine", "내 보고서"]].map(([k, l]) => `<button data-ds="${k}" class="${S.dashScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
-    <span class="small muted right">보고서 수·진행 현황·최근/위험 보고서가 선택한 범위(담당 엔지니어 기준)로 바뀝니다.</span></div>
-  <div class="grid g4" style="margin-top:12px">
-    ${[["고객", d.customers, "👥"], ["관리 장비", d.equipment, "🗄️"], ["보관 로그", d.logs, "📄"], ["전체 보고서", d.reports, "📊"]].map(([l, n, e]) =>
-      `<div class="card kpi"><div class="ico"></div><div class="l">${e} ${l}</div><div class="v" data-count="${n}">0</div></div>`).join("")}
+  <div class="row"><b style="font-size:15px">${hi}, ${esc(S.me.full_name || S.me.username)}님</b><span class="small muted">이번 달 보고서 ${d.this_month}건</span>
+    <div class="tabs right" style="margin:0;border:0" id="dsc">${[["all", "전체"], ...(d.can_team ? [["team", "우리 팀"]] : []), ["mine", "내 담당"]].map(([k, l]) => `<button data-ds="${k}" class="${S.dashScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
+    ${can("report.create") ? '<a class="btn primary sm" href="#/new">＋ 새 보고서</a>' : ""}</div>
+  <div class="grid g4" style="margin-top:10px">
+    ${[["고객", d.customers, "customers"], ["관리 장비", d.equipment, "eq"], ["보관 로그", d.logs, "logs"], ["전체 보고서", d.reports, "reports"]].map(([l, n, k]) =>
+      `<div class="card kpi click" data-kp="${k}" tabindex="0"><div class="row"><div class="l">${l}</div><span class="go right">목록 →</span></div><div class="v" data-count="${n}">0</div></div>`).join("")}
   </div>
-  <div class="grid g3" style="margin-top:18px">
-    <div class="card"><h3>진행 현황</h3>
-      ${["draft", "review", "completed", "sent"].map((k) => `<div style="margin:12px 0"><div class="row"><span>${S.catalog.status[k]}</span><b class="right">${st[k] || 0}</b></div>
-        <div class="bar"><i data-w="${Math.round((st[k] || 0) / total * 100)}" style="background:${{ draft: "#93a1b3", review: "var(--amber)", completed: "var(--green)", sent: "var(--blue)" }[k]}"></i></div></div>`).join("")}
-    </div>
-    <div class="card" style="grid-column:span 2"><h3>최근 보고서</h3>${reportTable(d.recent, true)}</div>
+  <div class="grid g2" style="margin-top:12px">
+    <div class="card"><div class="row" style="margin-bottom:8px"><h3 style="margin:0">장비 판정 현황</h3><span class="small muted">장비별 최신 로그 기준 · 총 ${E.length}대</span>
+      <div class="tabs right" style="margin:0;border:0">${[["eng", "담당자별"], ["dept", "부서별"]].map(([k, l]) => `<button data-by="${k}" class="${S.dashBy === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+      <div class="row" style="gap:18px;margin-bottom:10px">${Object.entries(ST).map(([k, [l, c]]) => `<div><div class="small muted">${l}</div><b style="font-size:20px;color:${c}">${all_[{ critical: "c", warning: "w", normal: "n", nolog: "x" }[k]]}</b></div>`).join("")}<div class="grow">${stack(all_)}</div></div>
+      <div class="legend" style="margin-bottom:6px">${Object.values(ST).map(([l, c]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}</div>
+      <table class="t"><thead><tr><th>${S.dashBy === "dept" ? "부서" : "정 담당자"}</th><th style="width:45%">판정 분포</th><th style="text-align:center">위험</th><th style="text-align:center">요주의</th><th style="text-align:center">정상</th><th style="text-align:center">계</th></tr></thead><tbody>
+      ${groups(S.dashBy).map(([k, rows]) => { const c = cnt(rows); return `<tr class="click" data-grp="${esc(k)}"><td><b>${esc(k)}</b></td><td>${stack(c)}</td><td style="text-align:center;color:var(--red);font-weight:700">${c.c || ""}</td><td style="text-align:center;color:#b9790f;font-weight:700">${c.w || ""}</td><td style="text-align:center">${c.n || ""}</td><td style="text-align:center">${rows.length}</td></tr>`; }).join("") || '<tr><td colspan="6" class="muted small">장비가 없습니다.</td></tr>'}</tbody></table></div>
+    <div class="card"><div class="row" style="margin-bottom:8px"><h3 style="margin:0">위험 · 요주의 장비</h3><span class="small muted right">줄을 누르면 장비 · 로그 보관함</span></div>
+      <div style="overflow:auto;max-height:420px"><table class="t"><thead><tr><th>판정</th><th>고객</th><th>장비</th><th>정 담당</th><th>진단</th><th>최근 로그</th></tr></thead><tbody>
+      ${E.filter((x) => x.status === "critical" || x.status === "warning").sort((a, b) => (a.status === "critical" ? 0 : 1) - (b.status === "critical" ? 0 : 1) || b.crit - a.crit).map((x) => `<tr class="click" data-eqc="${x.customer_id}"><td>${chip(x.status)}</td><td>${esc(x.customer)}</td><td><b>${esc(x.name)}</b> <span class="small muted">${esc(x.model)}</span></td><td class="small">${esc(x.engineer || "-")}${x.dept ? `<div class="muted">${esc(x.dept)}</div>` : ""}</td><td class="small">${x.crit ? `<span style="color:var(--red)">위험 ${x.crit}</span> ` : ""}${x.warn ? `요주의 ${x.warn}` : ""}</td><td class="small muted">${esc(x.at)}</td></tr>`).join("") || '<tr><td colspan="6"><div class="ok-box">위험·요주의 장비가 없습니다.</div></td></tr>'}</tbody></table></div></div>
   </div>
-  ${d.attention.length ? `<div class="card" style="margin-top:18px"><h3>🚨 위험 판정 보고서</h3>${reportTable(d.attention, true)}</div>` : ""}
-  ${(d.team || []).length ? `<div class="card" style="margin-top:18px"><h3>👥 ${S.me.role === "admin" || can("user.manage") ? "전체 담당자 현황" : "우리 팀 현황"}</h3><div style="overflow:auto"><table class="t"><thead><tr><th>담당자</th><th>팀</th><th style="text-align:center">담당 고객 (정/부)</th><th style="text-align:center">진행 중 보고서</th><th style="text-align:center">이번 달 완료</th><th style="text-align:center">위험 보고서</th><th style="text-align:center">위험 장비 고객</th><th>최근 로그인</th></tr></thead><tbody>
+  <div class="card" style="margin-top:12px"><h3>최근 보고서</h3>${reportTable(d.recent, true)}</div>
+  ${d.attention.length ? `<div class="card" style="margin-top:12px"><h3>위험 판정 보고서</h3>${reportTable(d.attention, true)}</div>` : ""}
+  ${(d.team || []).length ? `<div class="card" style="margin-top:12px"><h3>${S.me.role === "admin" || can("user.manage") ? "전체 담당자 현황" : "우리 팀 현황"}</h3><div style="overflow:auto"><table class="t"><thead><tr><th>담당자</th><th>팀</th><th style="text-align:center">담당 고객 (정/부)</th><th style="text-align:center">진행 중</th><th style="text-align:center">이번 달 완료</th><th style="text-align:center">위험 보고서</th><th style="text-align:center">위험 고객</th><th>최근 로그인</th></tr></thead><tbody>
     ${d.team.map((t) => `<tr class="click" data-eng="${t.id}"><td><b>${esc(t.name)}</b> <span class="small muted">${esc(t.title)} · ${esc(t.role_label)}</span></td><td class="small">${t.leader_name ? esc(t.leader_name) + " 팀" : '<span class="muted">-</span>'}</td>
       <td style="text-align:center">${t.main} / ${t.sub}</td><td style="text-align:center">${t.in_progress}</td><td style="text-align:center">${t.done_month}</td>
-      <td style="text-align:center">${t.critical ? `<span class="chip critical">${t.critical}</span>` : "0"}</td><td style="text-align:center">${t.crit_customers ? `<span class="chip critical">${t.crit_customers}</span>` : "0"}</td><td class="small muted">${esc(t.last_login)}</td></tr>`).join("")}</tbody></table></div>
-    <p class="small muted" style="margin:8px 0 0">줄을 누르면 그 담당자의 보고서 목록으로 이동합니다.</p></div>` : ""}`;
+      <td style="text-align:center">${t.critical ? `<span class="chip critical">${t.critical}</span>` : "0"}</td><td style="text-align:center">${t.crit_customers ? `<span class="chip critical">${t.crit_customers}</span>` : "0"}</td><td class="small muted">${esc(t.last_login)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+  $$("[data-by]", v).forEach((b) => b.onclick = () => { S.dashBy = b.dataset.by; route(); });
+  $$("[data-eqc]", v).forEach((r) => r.onclick = () => { location.hash = "#/logs/" + r.dataset.eqc; });
+  $$("[data-grp]", v).forEach((r) => r.onclick = () => eqListModal(`${r.dataset.grp} 장비`, groups(S.dashBy).find(([k]) => k === r.dataset.grp)[1]));
+  $$("[data-kp]", v).forEach((c) => c.onkeydown = (e) => { if (e.key === "Enter") c.click(); });
+  $$("[data-kp]", v).forEach((c) => c.onclick = () => {
+    const k = c.dataset.kp;
+    if (k === "customers") { S.custScope = "all"; location.hash = "#/customers"; }
+    else if (k === "reports") { S.repEngineer = ""; location.hash = "#/reports"; }
+    else if (k === "eq") eqListModal("관리 장비", E);
+    else logListModal();
+  });
   bindReportRows(v);
   $$("[data-ds]", v).forEach((b) => b.onclick = () => { S.dashScope = b.dataset.ds; route(); });
   $$("[data-eng]", v).forEach((r) => r.onclick = () => { S.repEngineer = r.dataset.eng; location.hash = "#/reports"; });
+}
+// 대시보드 목록 창: 장비 / 로그
+function eqListModal(title, rows) {
+  const m = modal(`<h3>${esc(title)} <span class="small muted" style="font-weight:400">${rows.length}대</span></h3><input type="search" id="eqf" placeholder="고객·장비·담당자 검색" style="max-width:260px">
+    <div style="overflow:auto;max-height:60vh;margin-top:8px"><table class="t"><thead><tr><th>판정</th><th>고객</th><th>장비</th><th>모델</th><th>정 담당</th><th>부서</th><th>최근 로그</th></tr></thead><tbody id="eqb"></tbody></table></div>
+    <div class="actions"><button class="btn" data-close>닫기</button></div>`, "wide");
+  const draw = () => { const q = $("#eqf", m).value.trim();
+    $("#eqb", m).innerHTML = rows.filter((x) => !q || [x.customer, x.name, x.engineer, x.dept, x.model].join(" ").includes(q)).map((x) => `<tr class="click" data-eqc="${x.customer_id}"><td>${x.status === "nolog" ? '<span class="chip gray">로그 없음</span>' : chip(x.status)}</td><td>${esc(x.customer)}</td><td><b>${esc(x.name)}</b></td><td class="small">${esc(x.model)}</td><td class="small">${esc(x.engineer || "-")}</td><td class="small">${esc(x.dept || "-")}</td><td class="small muted">${esc(x.at || "-")}</td></tr>`).join("");
+    $$("[data-eqc]", m).forEach((r) => r.onclick = () => { m.remove(); location.hash = "#/logs/" + r.dataset.eqc; }); };
+  $("#eqf", m).oninput = draw; draw();
+}
+async function logListModal() {
+  const rows = await api("logs-recent?limit=300");
+  const m = modal(`<h3>보관 로그 <span class="small muted" style="font-weight:400">최근 ${rows.length}건</span></h3><input type="search" id="lgf" placeholder="고객·장비·파일 검색" style="max-width:260px">
+    <div style="overflow:auto;max-height:60vh;margin-top:8px"><table class="t"><thead><tr><th>수집 시점</th><th>고객</th><th>장비</th><th>파일</th><th>판정</th></tr></thead><tbody id="lgb"></tbody></table></div>
+    <div class="actions"><button class="btn" data-close>닫기</button></div>`, "wide");
+  const draw = () => { const q = $("#lgf", m).value.trim();
+    $("#lgb", m).innerHTML = rows.filter((x) => !q || [x.customer_name, x.equipment_name, x.original_name].join(" ").includes(q)).map((x) => `<tr class="click" data-lc="${x.customer_id}"><td class="small">${esc(x.collected_at)}</td><td>${esc(x.customer_name)}</td><td>${esc(x.equipment_name || "-")}</td><td class="small">${esc(x.original_name)}</td><td>${chip(x.status || "normal")}</td></tr>`).join("");
+    $$("[data-lc]", m).forEach((r) => r.onclick = () => { m.remove(); location.hash = "#/logs/" + r.dataset.lc; }); };
+  $("#lgf", m).oninput = draw; draw();
 }
 function reportTable(rows, compact = false) {
   if (!rows.length) return `<div class="empty"><div class="big">🗂️</div>아직 보고서가 없습니다.</div>`;
@@ -333,13 +382,15 @@ async function pageNew(v) {
     const z = $("#wz");
     if (W.step === 1) {
       z.innerHTML = `<div class="card"><div class="row"><input type="search" id="cq" placeholder="고객명/주소 검색" style="max-width:360px"><label class="small row" style="gap:6px"><input type="checkbox" id="call" ${W.allCust ? "checked" : ""}> 다른 담당자 고객도 보기</label>
-        ${can("customer.edit") ? '<a class="btn right" href="#/customers">＋ 고객 등록/기존 DB 연결</a>' : ""}</div><div class="pick" id="cl" style="margin-top:14px"></div></div>`;
+        ${can("customer.edit") ? '<a class="btn right" href="#/customers">＋ 고객 등록/기존 DB 연결</a>' : ""}</div><div id="cl" style="margin-top:10px"></div></div>`;
       const list = () => {
         const q = $("#cq").value.trim();
         const rows = S.customers.filter((c) => !q || c.name.includes(q) || (c.address || "").includes(q));
-        $("#cl").innerHTML = rows.map((c) => `<div class="opt ${W.customer?.id === c.id ? "on" : ""}" data-c="${c.id}"><div class="em">🏢</div><b>${esc(c.name)}</b>
-          <small>${esc(c.address || c.site || "")}</small><div class="row small muted" style="margin-top:8px">${c.my_role ? roleChip(c.my_role) : ""} 장비 ${c.equipment_count} · 보고서 ${c.report_count} ${c.health ? healthCell(c.health) : ""}</div></div>`).join("")
-          || '<div class="empty">등록된 고객이 없습니다. 고객 메뉴에서 등록하세요.</div>';
+        $("#cl").innerHTML = rows.length ? `<div style="overflow:auto;max-height:560px"><table class="t"><thead><tr><th style="width:28px"></th><th>고객</th><th>주소 · 사이트</th><th>내 담당</th><th>정 담당자</th><th style="text-align:center">장비</th><th style="text-align:center">보고서</th><th>최근 상태</th></tr></thead><tbody>
+          ${rows.map((c) => `<tr class="click ${W.customer?.id === c.id ? "sel" : ""}" data-c="${c.id}"><td><input type="radio" name="wzc" ${W.customer?.id === c.id ? "checked" : ""} tabindex="-1"></td>
+            <td><b>${esc(c.name)}</b></td><td class="small muted">${esc(c.address || c.site || "-")}</td><td>${c.my_role ? roleChip(c.my_role) : '<span class="muted small">-</span>'}</td>
+            <td class="small">${esc((c.main || {}).name || "-")}</td><td style="text-align:center">${c.equipment_count}</td><td style="text-align:center">${c.report_count}</td><td>${c.health ? healthCell(c.health) : '<span class="muted small">-</span>'}</td></tr>`).join("")}</tbody></table></div>`
+          : '<div class="empty">등록된 고객이 없습니다. 고객 메뉴에서 등록하세요.</div>';
         $$("[data-c]", z).forEach((o) => o.onclick = async () => { W.customer = await api("customers/" + o.dataset.c); W.eq = []; W.logs = []; list(); });
       };
       $("#cq").oninput = list; list();
@@ -567,6 +618,7 @@ async function pageReport(v, id) {
     }));
     $("#send-btn") && ($("#send-btn").onclick = () => sendMail(R, reload));
     $$("[data-pv]", v).forEach((a) => a.onclick = (ev) => { ev.preventDefault(); perfDetail(+a.dataset.pv); });
+    bindIgnore(v, R, reload);
   };
   draw();
 }
@@ -579,8 +631,29 @@ function eqCard(e, wide) {
     ${cap.total_gb ? `<div style="margin-top:12px"><div class="row small"><span>Data 용량</span><b class="right">${cap.pct}% · ${gb(cap.used_gb)} / ${gb(cap.total_gb)}</b></div><div class="bar"><i data-w="${cap.pct}" style="background:${cap.pct >= 95 ? "var(--red)" : cap.pct >= 85 ? "var(--amber)" : "var(--blue)"}"></i></div></div>` : '<div class="small muted" style="margin-top:12px">용량 데이터 없음 (로그 미연결)</div>'}
     ${wide && e.aggregates.length ? `<div class="grid g2" style="margin-top:12px">${e.aggregates.slice(0, 8).map((g) => `<div><div class="row small"><span class="mono">${esc(g.name)}</span><span class="right">${g.pct}%</span></div><div class="bar"><i data-w="${g.pct}" style="background:${g.pct >= 95 ? "var(--red)" : g.pct >= 85 ? "var(--amber)" : "var(--blue)"}"></i></div></div>`).join("")}</div>` : ""}
     ${eqInfo(e)}
-    <div style="margin-top:12px">${a.findings.length ? a.findings.slice(0, wide ? 10 : 4).map((f) => `<div class="finding"><span class="sev ${f.severity}"></span><div><b class="small">${esc(f.title)}</b><div class="small muted">${esc(f.recommendation)}</div></div></div>`).join("")
-      + (a.findings.length > (wide ? 10 : 4) ? `<div class="small muted">외 ${a.findings.length - (wide ? 10 : 4)}건</div>` : "") : '<div class="ok-box">주요 이상 징후가 없습니다.</div>'}</div></div>`;
+    <div style="margin-top:12px">${a.findings.length ? a.findings.map((f, i) => `<div class="finding"><span class="sev ${f.severity}"></span><div class="grow"><b class="small">${esc(f.title)}</b><div class="small muted">${esc(f.recommendation)}</div></div>
+        ${can("report.edit") && f.severity !== "info" ? `<button class="btn sm" data-ign="${e.id}:${i}" title="이 항목을 판정에서 빼기">무시</button>` : ""}</div>`).join("")
+      : '<div class="ok-box">주요 이상 징후가 없습니다.</div>'}
+    ${(a.ignored || []).length ? `<details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">무시 설정 항목 ${a.ignored.length}건 (판정·점수에서 제외)</summary>${a.ignored.map((f) => `<div class="finding"><span class="sev info"></span><div class="grow"><span class="small ign">${esc(f.title)}</span>
+        <div class="small muted">${f.ignored.all ? "모든 장비" : "이 장비"} · ${esc(f.ignored.reason || "사유 없음")}</div></div>${can("report.edit") ? `<button class="btn sm" data-unign="${f.ignored.id}">해제</button>` : ""}</div>`).join("")}</details>` : ""}</div></div>`;
+}
+// 진단 항목 '무시' 설정 → 이 장비의 이후·과거 보고서에 계속 반영 (모든 장비 공통은 관리자만)
+function bindIgnore(v, R, reload) {
+  $$("[data-ign]", v).forEach((b) => b.onclick = () => {
+    const [eid, i] = b.dataset.ign.split(":").map(Number); const e = R.equipments.find((x) => x.id === eid); const f = e.analysis.findings[i];
+    const m = modal(`<h3>진단 항목 무시 설정</h3><div class="finding"><span class="sev ${f.severity}"></span><div><b class="small">${esc(f.title)}</b><div class="small muted">${esc(f.category)} · ${esc(f.detail || "")}</div></div></div>
+      <label class="f">적용 범위</label><label class="row small" style="gap:6px"><input type="radio" name="isc" value="eq" checked> 이 장비(${esc(e.name)})에만 — 이후 보고서와 다시 분석하는 과거 보고서에 계속 적용</label>
+      ${can("user.manage") ? '<label class="row small" style="gap:6px;margin-top:4px"><input type="radio" name="isc" value="all"> 모든 장비 (관리자)</label>' : ""}
+      <label class="f">사유</label><input type="text" id="irs" placeholder="예: 고객 요청으로 사용하지 않는 포트, 시험용 볼륨 등">
+      <p class="small muted">수치가 달라져도(예: 사용률 91% → 93%) 같은 항목으로 보고 계속 뺍니다. [시스템 설정 › 무시 설정 항목]에서 언제든 해제할 수 있습니다.</p>
+      <div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="igo">무시 설정</button></div>`);
+    $("#igo", m).onclick = (ev) => busy(ev.target, async () => {
+      const all = ($("[name=isc]:checked", m) || {}).value === "all";
+      await api("ignore-rules", { method: "POST", body: { equipment_id: all ? null : eid, key: f.key, category: f.category, title: f.title, reason: $("#irs", m).value, report_id: R.id } });
+      m.remove(); reload("무시 설정을 반영해 다시 분석했습니다. 보고서를 다시 생성하면 반영됩니다.");
+    });
+  });
+  $$("[data-unign]", v).forEach((b) => b.onclick = async () => { if (await confirmBox("무시 설정을 해제할까요? 다시 판정에 포함됩니다.")) { await api(`ignore-rules/${b.dataset.unign}?report_id=${R.id}`, { method: "DELETE" }); reload("무시 설정을 해제했습니다."); } });
 }
 
 // 서비스 코드별 보고서 구성 안내 · 작업 내역 입력 카드
@@ -1038,8 +1111,11 @@ async function pageTemplates(v) {
 
 // ───────────────────────── 사용자 · 권한 ─────────────────────────
 async function pageUsers(v) {
-  const [users, cat] = await Promise.all([api("users"), api("permissions")]);
+  const [users, cat, depts] = await Promise.all([api("users"), api("permissions"), api("depts")]);
   const admin = can("user.manage"), leader = S.me.role === "manager" && !admin;
+  const deptOpts = (sel) => `<option value="">부서 없음</option>${depts.map((d) => `<option value="${d.id}" ${sel === d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}`;
+  const deptCell = (u) => admin ? `<select class="small" data-dept="${u.id}" style="width:auto">${deptOpts(u.dept_id)}</select>` : esc(u.dept_name || "-");
+  const fDept = S.userDept || "";
   const leaders = users.filter((x) => x.is_active && ["manager", "admin"].includes(x.role));
   const teamCell = (u) => {
     let h = "";
@@ -1055,11 +1131,24 @@ async function pageUsers(v) {
   const mine = (u) => admin || (leader && u.leader_id === S.me.id);
   v.innerHTML = `<div class="card"><div class="row"><h3 style="margin:0">사용자</h3>${admin ? '<button class="btn primary sm right" id="new-u">＋ 사용자 등록</button>' : ""}</div>
     ${leader ? '<p class="small muted" style="margin:8px 0 0">팀장은 소속 팀이 없는 엔지니어를 [내 팀으로] 넣을 수 있고, 팀원의 고객 담당(정/부)과 보고서 현황을 볼 수 있습니다. 다른 팀 소속을 바꾸려면 관리자에게 요청하세요.</p>' : ""}
-    <table class="t" style="margin-top:12px"><thead><tr><th>아이디</th><th>이름</th><th>역할</th><th>팀</th><th>연락처</th><th>담당 고객</th><th>권한</th><th>최근 로그인</th><th></th></tr></thead><tbody>
-    ${users.map((u) => `<tr style="${u.is_active ? "" : "opacity:.5"}"><td class="mono">${esc(u.username)}</td><td><b>${esc(u.full_name)}</b> <span class="small muted">${esc(u.title)}</span></td><td>${chip(u.role === "admin" ? "critical" : u.role === "manager" ? "warning" : u.role === "engineer" ? "sent" : "gray", u.role_label)}</td><td class="small" style="white-space:nowrap">${teamCell(u)}</td>
+    <div class="row small" style="margin-top:10px;gap:6px"><span class="muted">부서</span><select id="u-df" style="width:auto"><option value="">전체</option>${depts.map((d) => `<option value="${d.id}" ${String(d.id) === String(fDept) ? "selected" : ""}>${esc(d.name)} (${d.users})</option>`).join("")}<option value="none" ${fDept === "none" ? "selected" : ""}>부서 없음</option></select></div>
+    <table class="t" style="margin-top:8px"><thead><tr><th>아이디</th><th>이름</th><th>부서</th><th>역할</th><th>팀</th><th>연락처</th><th>담당 고객</th><th>권한</th><th>최근 로그인</th><th></th></tr></thead><tbody>
+    ${users.filter((u) => !fDept || (fDept === "none" ? !u.dept_id : String(u.dept_id) === String(fDept))).map((u) => `<tr style="${u.is_active ? "" : "opacity:.5"}"><td class="mono">${esc(u.username)}</td><td><b>${esc(u.full_name)}</b> <span class="small muted">${esc(u.title)}</span></td><td class="small">${deptCell(u)}</td><td>${chip(u.role === "admin" ? "critical" : u.role === "manager" ? "warning" : u.role === "engineer" ? "sent" : "gray", u.role_label)}</td><td class="small" style="white-space:nowrap">${teamCell(u)}</td>
       <td class="small">${esc(u.email)}<br>${esc(u.phone)}</td><td class="small"><a href="#/customers" data-uc="${u.id}">정 ${u.assigned.main} · 부 ${u.assigned.sub}</a></td><td class="small">${u.permissions.length}/${Object.keys(cat.permissions).length}</td><td class="small muted">${esc((u.last_login_at || "").replace("T", " ").slice(0, 16))}</td>
       <td style="white-space:nowrap">${admin ? `<button class="btn sm" data-eu="${u.id}">수정</button>` : ""}${mine(u) && u.assigned.main + u.assigned.sub ? `<button class="btn sm" data-tr="${u.id}">담당 이관</button>` : ""}${admin && u.id !== S.me.id ? `<button class="btn sm danger" data-ru="${u.id}">삭제</button>` : ""}</td></tr>`).join("")}</tbody></table></div>
+    ${admin ? `<div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">부서 설정</h3><span class="small muted">사용자를 부서에 배정하면 대시보드에서 부서별 장비 현황을 볼 수 있습니다.</span></div>
+      <table class="t" style="margin-top:8px;max-width:640px"><thead><tr><th style="width:70px">순서</th><th>부서 이름</th><th style="width:80px">인원</th><th style="width:150px"></th></tr></thead><tbody>
+      ${depts.map((d) => `<tr><td><input type="number" data-dso="${d.id}" value="${d.sort_no}" style="width:60px"></td><td><input type="text" data-dnm="${d.id}" value="${esc(d.name)}"></td><td class="small">${d.users}명</td>
+        <td style="white-space:nowrap"><button class="btn sm" data-dsv="${d.id}">저장</button><button class="btn sm danger" data-ddl="${d.id}">삭제</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted small">아직 부서가 없습니다.</td></tr>'}
+      <tr><td><input type="number" id="nd-so" value="${depts.length + 1}" style="width:60px"></td><td><input type="text" id="nd-nm" placeholder="새 부서 이름 (예: 기술지원1팀)"></td><td></td><td><button class="btn sm primary" id="nd-add">＋ 추가</button></td></tr></tbody></table></div>` : ""}
     ${admin ? '<div class="card" style="margin-top:16px"><h3>감사 로그</h3><div id="audit"></div></div>' : ""}`;
+  $("#u-df").onchange = (e) => { S.userDept = e.target.value; route(); };
+  $$("[data-dept]", v).forEach((sel) => sel.onchange = async () => { try { await api(`users/${sel.dataset.dept}/dept`, { method: "POST", body: { dept_id: sel.value ? +sel.value : null } }); toast("부서를 지정했습니다.", "ok"); } catch (e) { toast(e.message, "err"); } route(); });
+  if (admin) {
+    $("#nd-add").onclick = (e) => busy(e.target, async () => { await api("depts", { method: "POST", body: { name: $("#nd-nm").value.trim(), sort_no: +$("#nd-so").value || 0 } }); toast("부서를 추가했습니다.", "ok"); route(); });
+    $$("[data-dsv]", v).forEach((b) => b.onclick = (e) => busy(e.target, async () => { const id = b.dataset.dsv; await api("depts/" + id, { method: "PUT", body: { name: $(`[data-dnm="${id}"]`, v).value.trim(), sort_no: +$(`[data-dso="${id}"]`, v).value || 0 } }); toast("저장되었습니다.", "ok"); route(); }));
+    $$("[data-ddl]", v).forEach((b) => b.onclick = async () => { const d = depts.find((x) => x.id === +b.dataset.ddl); if (await confirmBox(`'${d.name}' 부서를 삭제할까요? 소속 사용자 ${d.users}명은 '부서 없음'이 됩니다.`)) { await api("depts/" + d.id, { method: "DELETE" }); toast("삭제되었습니다.", "ok"); route(); } });
+  }
   const form = (u) => {
     const ov = { ...(u?.overrides || {}) };
     const m = modal(`<h3>${u ? "사용자 수정" : "사용자 등록"}</h3><div class="grid g2">
@@ -1068,6 +1157,7 @@ async function pageUsers(v) {
       <div><label class="f">이름</label><input type="text" id="uf" value="${esc(u?.full_name || "")}"></div><div><label class="f">직급</label><input type="text" id="ut" value="${esc(u?.title || "")}"></div>
       <div><label class="f">이메일</label><input type="email" id="ue" value="${esc(u?.email || "")}"></div><div><label class="f">연락처</label><input type="text" id="uph" value="${esc(u?.phone || "")}"></div>
       <p class="small muted" style="grid-column:1/-1;margin:0">이 사용자가 담당 엔지니어인 보고서에는 위 연락처와 이메일이 회사 연락처로 표시됩니다.</p>
+      <div><label class="f">부서</label><select id="ud">${deptOpts(u?.dept_id || null)}</select></div><div></div>
       <div><label class="f">역할</label><select id="ur">${Object.entries(cat.roles).map(([k, l]) => `<option value="${k}" ${(u?.role || "engineer") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="row" style="margin-top:28px"><input type="checkbox" id="ua" ${u?.is_active !== false ? "checked" : ""}> 활성</label></div></div>
       <label class="f">세부 권한 (역할 기본값에서 개별 조정)</label><div class="perm-grid" id="pg"></div>
@@ -1079,7 +1169,7 @@ async function pageUsers(v) {
     };
     $("#ur", m).onchange = () => { for (const k in ov) delete ov[k]; drawPerm(); }; drawPerm();
     $("#us", m).onclick = (e) => busy(e.target, async () => {
-      const body = { username: $("#un", m).value.trim(), password: $("#up", m).value || null, full_name: $("#uf", m).value, title: $("#ut", m).value, email: $("#ue", m).value, phone: $("#uph", m).value, role: $("#ur", m).value, is_active: $("#ua", m).checked, overrides: ov };
+      const body = { username: $("#un", m).value.trim(), password: $("#up", m).value || null, full_name: $("#uf", m).value, title: $("#ut", m).value, email: $("#ue", m).value, phone: $("#uph", m).value, role: $("#ur", m).value, dept_id: $("#ud", m).value ? +$("#ud", m).value : null, is_active: $("#ua", m).checked, overrides: ov };
       await api(u ? "users/" + u.id : "users", { method: u ? "PUT" : "POST", body }); m.remove(); toast("저장되었습니다.", "ok"); route();
     });
   };
@@ -1138,7 +1228,16 @@ async function pageSettings(v) {
     ${t === "메일 발송" ? `<div class="row" style="margin-top:8px"><input type="email" id="tm-to" placeholder="테스트 받을 주소" value="${esc(S.me.email || "")}" style="max-width:280px"><button class="btn sm" id="tm">테스트 메일 보내기</button></div>` : ""}</div>`).join("")
     + `<div class="card" style="margin-bottom:16px"><h3>서버 점검</h3><div class="row">${chk(d.zip, "zip (PPT·엑셀)")}${chk(d.curl, "cURL (Claude)")}${chk(d.openssl, "openssl (암호화·메일)")}<span class="chip gray">PHP ${esc(d.php)}</span><span class="chip gray">업로드 한도 ${esc(d.upload_max)} / ${esc(d.post_max)}</span></div>
       <p class="small muted" style="margin-top:8px">대용량 로그(수십 MB)를 올리려면 호스팅 관리 화면에서 upload_max_filesize·post_max_size 를 늘려 주세요.</p></div>`
+    + `<div class="card" style="margin-bottom:16px"><h3>무시 설정 항목</h3><p class="small muted" style="margin:0 0 8px">보고서 화면의 진단 항목에서 [무시]를 누르면 여기에 쌓입니다. 같은 장비의 이후 보고서(그리고 다시 분석하는 과거 보고서)에서 판정·점수에 자동으로 빠집니다.</p><div id="ign-list" class="small muted">불러오는 중…</div></div>`
     + `<div class="row"><span class="small muted">SMTP 비밀번호, Microsoft 365 클라이언트 암호, API 키는 암호화해 DB(mrs_setting)에 저장합니다.</span><button class="btn primary right" id="st-save">저장</button></div>`;
+  const ignDraw = async () => {
+    const rs = await api("ignore-rules"); const box = $("#ign-list", v); if (!box) return;
+    box.className = ""; box.innerHTML = rs.length ? `<table class="t"><thead><tr><th>적용 범위</th><th>항목</th><th>사유</th><th>설정</th><th></th></tr></thead><tbody>${rs.map((r) => `<tr><td class="small">${r.equipment_id ? `${esc(r.customer_name)} · <b>${esc(r.equipment_name)}</b>` : '<span class="chip warning">모든 장비</span>'}</td>
+      <td><span class="small muted">${esc(r.category)}</span> ${esc(r.title)}</td><td class="small">${esc(r.reason || "-")}</td><td class="small muted">${esc(r.created_by)} · ${esc(r.created_at)}</td><td><button class="btn sm" data-ignx="${r.id}">해제</button></td></tr>`).join("")}</tbody></table>`
+      : '<span class="small muted">설정된 항목이 없습니다.</span>';
+    $$("[data-ignx]", box).forEach((b) => b.onclick = async () => { if (await confirmBox("무시 설정을 해제할까요? 다음 분석부터 다시 판정에 포함됩니다.")) { try { await api("ignore-rules/" + b.dataset.ignx, { method: "DELETE" }); toast("해제했습니다.", "ok"); } catch (e) { toast(e.message, "err"); } ignDraw(); } });
+  };
+  ignDraw().catch(() => {});
   // 발송 방식에 맞는 입력 칸만 보이기
   const sync = () => { const m = $("[data-k=mail_method]", v).value; $("[data-grp='일반 SMTP']", v).style.display = m === "smtp" ? "" : "none"; $("[data-grp='Microsoft 365 (OAuth)']", v).style.display = m === "m365" ? "" : "none"; };
   $("[data-k=mail_method]", v).onchange = sync; sync();
