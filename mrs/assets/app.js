@@ -165,6 +165,20 @@ const ROUTES = [
   ["users", "사용자 · 권한", I.shield, "report.view"],
   ["settings", "시스템 설정", I.gear, "settings.manage"],
 ];
+// 왼쪽 메뉴: 묶음 제목 + 가는 선으로 이어진 하위 메뉴 (트리 모양)
+const NAV_GROUPS = [
+  ["보고서", I.doc, ["dashboard", "new", "reports"]],
+  ["고객 · 장비", I.server, ["customers", "logs", "collect", "templates"]],
+  ["관리", I.gear, ["users", "settings"]],
+];
+function navHtml() {
+  const ok = ROUTES.filter((r) => can(r[3]) && (!S.offline || r[0] === "collect"));
+  return NAV_GROUPS.map(([t, ico, ids]) => {
+    const items = ok.filter((r) => ids.includes(r[0]));
+    if (!items.length) return "";
+    return `<div class="ng"><div class="ng-h">${ico}<span>${t}</span></div><div class="ng-c">${items.map((r) => `<a href="#/${r[0]}" data-r="${r[0]}"><span>${r[1]}</span></a>`).join("")}</div></div>`;
+  }).join("");
+}
 let deferredInstall = null;
 addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredInstall = e; const b = $("#install-btn"); if (b) b.hidden = false; });
 addEventListener("hashchange", () => route());
@@ -190,7 +204,7 @@ function render() {
   <div class="shell">
     <aside class="side" id="side">
       <div class="brand"><img src="assets/icons/mrs-192.png" alt=""><div><b>MRS</b><span>Management Report System</span></div></div>
-      <nav class="nav">${ROUTES.filter((r) => can(r[3]) && (!S.offline || r[0] === "collect")).map((r) => `<a href="#/${r[0]}" data-r="${r[0]}">${r[2]}<span>${r[1]}</span></a>`).join("")}</nav>
+      <nav class="nav">${navHtml()}</nav>
       <div class="foot"><div class="dx"><img src="assets/img/logo_color.png" alt="DATANEX"></div><span>MRS v1.0 · ${esc(S.me.role_label)}</span></div>
     </aside>
     <div class="main">

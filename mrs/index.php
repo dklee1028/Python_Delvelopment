@@ -17,6 +17,7 @@ $v = @filemtime(__DIR__ . '/assets/app.js') ?: 1;
 <link rel="apple-touch-icon" href="assets/icons/mrs-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="MRS">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="assets/app.css?v=<?= $v ?>">
 </head>
 <body>

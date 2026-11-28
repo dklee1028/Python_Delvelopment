@@ -254,3 +254,88 @@ table.t td { padding: 6px 10px; }
 table.t tr.sel td { background: rgba(25,105,165,.09); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .ign { opacity: .6; text-decoration: line-through; }
+
+/* ══ 깔끔한 관리화면 스타일 (가는 서체 · 1px 선 · 남색 사이드바 · 트리 메뉴) — 위의 값을 덮어씁니다 ══ */
+:root {
+  --font: "Pretendard Variable", "Pretendard", "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --side: #414c60; --side-line: rgba(255,255,255,.22); --side-text: #d3d9e2;
+  --bg: #ffffff; --soft: #f5f6f8; --line: #e1e4e9; --line-2: #d3d8df; --text: #2b2f36; --ink: #1d2128; --muted: #737b86;
+  --radius: 2px; --shadow: none;
+}
+:root[data-theme="dark"] { --side: #1a2332; --line-2: #2c3b50; }
+body { font-size: 13.5px; font-weight: 400; letter-spacing: -.01em; background: var(--bg); }
+h1, h2, h3, h4, b, strong { font-weight: 600; }
+/* 사이드바 */
+.shell { grid-template-columns: 224px 1fr; }
+.side { background: var(--side); color: var(--side-text); padding: 14px 12px; }
+.brand { padding: 2px 6px 12px; margin-bottom: 10px; border-bottom: 1px solid var(--side-line); }
+.brand img { width: 24px; height: 24px; border-radius: 3px; }
+.brand b { font-size: 17px; font-weight: 700; letter-spacing: .02em; } .brand span { color: #9aa6b6; font-size: 10.5px; }
+.nav { overflow-y: auto; }
+.ng { margin-bottom: 6px; }
+.ng-h { display: flex; align-items: center; gap: 9px; padding: 9px 6px 6px; color: #fff; font-size: 13.5px; font-weight: 500; }
+.ng-h svg { width: 16px; height: 16px; stroke-width: 1.6; opacity: .85; flex: none; }
+.ng-c { margin-left: 13px; padding-bottom: 2px; }
+.nav .ng-c a { display: block; position: relative; margin: 1px 0 1px 16px; padding: 6px 10px; border-radius: 3px; background: none;
+  color: var(--side-text); font-size: 13px; font-weight: 400; transform: none; }
+.nav .ng-c a span { display: block; }
+.nav .ng-c a::before, .nav .ng-c a.on::before { content: ""; position: absolute; left: -16px; top: -1px; bottom: -1px; width: 0; border-radius: 0;
+  background: none; border-left: 1px solid var(--side-line); }
+.nav .ng-c a:last-child::before { bottom: 50%; }
+.nav .ng-c a::after { content: ""; position: absolute; left: -16px; top: 50%; width: 10px; border-top: 1px solid var(--side-line); }
+.nav .ng-c a:hover { background: rgba(255,255,255,.06); color: #fff; }
+.nav .ng-c a.on { background: rgba(255,255,255,.12); color: #fff; font-weight: 600; }
+.side .foot { color: #8e99a9; }
+.side .foot .dx { border-radius: 2px; padding: 7px 10px; }
+/* 위쪽 머리글 · 본문 */
+.top { background: #fff; border-bottom: 1px solid var(--line); min-height: 52px; padding: 8px 24px; backdrop-filter: none; }
+:root[data-theme="dark"] .top { background: var(--card); }
+.top h2 { font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
+.content { padding: 18px 24px 48px; }
+.card { border: 1px solid var(--line); border-radius: var(--radius); box-shadow: none; padding: 14px 16px; }
+.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 10px; } .card h3::before { display: none; }
+/* 버튼: 작고 얇은 테두리 */
+.btn { height: 30px; padding: 0 12px; border: 1px solid var(--line-2); background: var(--card); color: var(--text); border-radius: 3px;
+  font-size: 12.5px; font-weight: 500; gap: 5px; box-shadow: none; }
+.btn:hover { border-color: #9aa3af; color: var(--ink); background: var(--soft); }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 12px; border-radius: 3px; }
+.btn.primary { background: var(--blue); border: 1px solid var(--blue); color: #fff; }
+.btn.primary:hover { background: #155a8e; border-color: #155a8e; color: #fff; }
+.btn.danger { color: var(--red); } .btn.danger:hover { border-color: var(--red); background: rgba(214,69,69,.05); color: var(--red); }
+.btn.ghost { border-color: transparent; background: transparent; } .btn.ghost:hover { background: var(--soft); }
+.btn.burger { height: 32px; }
+/* 입력칸 */
+input[type=text], input[type=email], input[type=password], input[type=date], input[type=datetime-local], input[type=number], input[type=search], select {
+  height: 30px; padding: 0 9px; border: 1px solid var(--line-2); border-radius: 3px; font-size: 13px; }
+textarea { border: 1px solid var(--line-2); border-radius: 3px; padding: 7px 9px; font-size: 13px; }
+input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: none; }
+label.f { font-weight: 500; color: #5b636e; }
+/* 표: 연회색 머리줄 · 1px 선 · 적당한 줄 높이 */
+table.t { border-top: 1px solid var(--line-2); }
+table.t th { background: var(--soft); color: #3f4650; font-size: 12.5px; font-weight: 500; text-align: center; padding: 8px 10px;
+  border-top: 0; border-bottom: 1px solid var(--line); }
+table.t th + th { border-left: 1px solid var(--line); }
+table.t td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid var(--line); }
+table.t td + td { border-left: 1px solid #eef0f3; }
+:root[data-theme="dark"] table.t td + td { border-left-color: var(--line); }
+table.t tbody tr:hover { background: #f8f9fb; }
+:root[data-theme="dark"] table.t tbody tr:hover, :root[data-theme="dark"] table.t th { background: var(--soft); color: var(--text); }
+.vis th { background: var(--soft); font-weight: 500; }
+.vis th, .vis td { border-bottom: 1px solid var(--line); }
+/* 작은 요소 */
+.chip { font-weight: 500; border-radius: 2px; }
+.kpi .v { font-weight: 600; } .kpi .l { color: var(--muted); }
+.tabs button { font-weight: 500; }
+.tabs button.on { font-weight: 600; }
+.steps .s { border-radius: 2px; font-weight: 500; padding: 9px 12px; } .steps .s.on { box-shadow: none; }
+.opt { border: 1px solid var(--line); } .opt:hover { transform: none; box-shadow: none; } .opt.on { box-shadow: none; }
+.seg { border-radius: 3px; border-color: var(--line-2); }
+.drop { border: 1px dashed #b7c0cc; border-radius: 3px; } .drop.over { transform: none; }
+.file-row, .file-card { border-radius: 3px; } .file-card:hover { transform: none; box-shadow: none; }
+.ai-box, .missing, .ok-box { border-radius: 3px; }
+.modal { border-radius: 4px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+.modal h3 { font-size: 16px; font-weight: 600; }
+.modal-bg { backdrop-filter: none; background: rgba(20,26,36,.45); }
+.variant { border-radius: 3px; background: var(--side); font-weight: 500; }
+.toast { background: var(--side); }
+@media (max-width: 900px) { .content { padding: 14px; } .top { padding: 8px 14px; } }
