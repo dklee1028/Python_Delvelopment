@@ -15,13 +15,20 @@ function report_eq_links($rid) {
 function report_log_ids($rid) { return array_map('intval', array_column(all("SELECT log_id FROM mrs_report_log WHERE report_id=?", [$rid]), 'log_id')); }
 
 /* 연결된 로그를 장비별로 병합·분석하여 analysis 에 저장 */
-function run_analysis($r) {
+function run_analysis($r, $keepAuto = true) {
     $links = report_eq_links($r['id']); $lids = report_log_ids($r['id']);
     $logs = $lids ? all('SELECT id, equipment_id, collected_at, parsed FROM mrs_log_file WHERE id IN (' . implode(',', $lids) . ') ORDER BY collected_at') : [];
-    $out = []; $per = [];
+    $out = []; $per = []; $prev = $keepAuto ? (array)jd($r['analysis'] ?? '', []) : [];
     foreach ($links as $eq) {
         $mine = array_values(array_filter($logs, function ($lg) use ($eq, $links) { return (int)$lg['equipment_id'] === (int)$eq['id'] || ($lg['equipment_id'] === null && count($links) === 1); }));
         $auto = false;
+        // 다시 분석할 때(무시 설정 등)는 처음에 자동으로 고른 로그를 그대로 씁니다. 새 로그가 올라왔다고 보고서 내용이 바뀌면 안 됩니다
+        $was = $prev[(string)$eq['id']] ?? null;
+        if (!$mine && $was && !empty($was['auto_logs']) && !empty($was['log_ids'])) {
+            $mine = all('SELECT id, equipment_id, collected_at, parsed FROM mrs_log_file WHERE equipment_id=? AND collected_at<=? AND id IN (' . implode(',', array_map('intval', $was['log_ids'])) . ') ORDER BY collected_at',
+                [$eq['id'], ($r['inspection_date'] ?: today()) . ' 23:59:59']);
+            if ($mine) $auto = true;
+        }
         if (!$mine) { // 이 장비 로그를 고르지 않았으면 점검일 기준 가장 최근 로그를 자동으로 씁니다
             $lg = one("SELECT id, equipment_id, collected_at, parsed FROM mrs_log_file WHERE equipment_id=? AND collected_at<=? ORDER BY collected_at DESC, id DESC LIMIT 1", [$eq['id'], ($r['inspection_date'] ?: today()) . ' 23:59:59'])
                 ?: one("SELECT id, equipment_id, collected_at, parsed FROM mrs_log_file WHERE equipment_id=? ORDER BY collected_at DESC, id DESC LIMIT 1", [$eq['id']]);

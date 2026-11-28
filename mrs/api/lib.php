@@ -15,7 +15,6 @@ function cfg() {
     }
     return $c;
 }
-function set_cfg($c) { /* 테스트용 */ $GLOBALS['__mrs_cfg'] = $c; }
 function data_dir() { $d = __DIR__ . '/../data'; if (!is_dir($d)) @mkdir($d, 0755, true); return realpath($d); }
 
 function db_connect($c) {

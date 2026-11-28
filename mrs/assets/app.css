@@ -113,11 +113,6 @@ table.t tr.click { cursor: pointer; }
 .kpi .l { color: var(--muted); font-size: 13px; }
 .kpi .ico { position: absolute; right: -10px; top: -10px; width: 90px; height: 90px; border-radius: 50%; opacity: .12; background: var(--blue); }
 .kpi:hover { transform: translateY(-3px); transition: transform .25s; }
-.hero { border-radius: 18px; padding: 26px 28px; color: #fff; position: relative; overflow: hidden;
-  background: linear-gradient(120deg, #0b2e4f 0%, #1969a5 60%, #2b86c9 100%); background-size: 200% 200%; animation: grad 12s ease infinite; }
-.hero h1 { color: #fff; font-size: 24px; } .hero p { color: #cfe2f3; margin: 6px 0 0; }
-.hero .wave { position: absolute; right: -40px; bottom: -60px; width: 320px; height: 320px; border-radius: 50%; border: 40px solid rgba(255,255,255,.06); }
-@keyframes grad { 50% { background-position: 100% 50%; } }
 .ring { --p: 0; --c: var(--green); width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; flex: none;
   background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--soft) 0); transition: --p 1s; position: relative; }
 .ring::after { content: ""; position: absolute; inset: 9px; border-radius: 50%; background: var(--card); }

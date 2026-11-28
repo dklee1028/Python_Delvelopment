@@ -279,8 +279,6 @@ async function pageDashboard(v) {
   const d = await api("dashboard?scope=" + S.dashScope);
   const hour = new Date().getHours();
   const hi = hour < 12 ? "좋은 아침입니다" : hour < 18 ? "좋은 오후입니다" : "수고 많으셨습니다";
-  const st = d.by_status || {};
-  const total = d.reports || 1;
   const E = d.eq_status || []; S.dashEq = E;
   const cnt = (rows) => ({ c: rows.filter((x) => x.status === "critical").length, w: rows.filter((x) => x.status === "warning").length, n: rows.filter((x) => x.status === "normal").length, x: rows.filter((x) => x.status === "nolog").length });
   const all_ = cnt(E);

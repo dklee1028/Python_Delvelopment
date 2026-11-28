@@ -96,13 +96,6 @@ function p_visual_single($s, $ctx, $e, $y, $sw) {
 }
 function vis_mark($v) { return ['정상' => '● 정상', '비정상' => '▲ 비정상', 'N/A' => 'N/A'][$v] ?? '-'; }
 function vis_tint($r, $c, $v) { return mb_strpos($v, '▲') !== false ? C_RED : (mb_strpos($v, '●') !== false ? C_GREEN : null); }
-function p_visual_matrix($s, $ctx, $y, $sw) {
-    $y = k_section($s, M_(), $y, $sw - 2 * M_(), '주요 점검 항목 – 육안 점검 (Main Inspection Items)');
-    $eqs = $ctx['equipments']; $rows = [array_merge(['Inspection Item'], array_map(function ($e) { return '#' . $e['seq']; }, $eqs))];
-    foreach (VISUAL_ITEMS as [$k, $label]) { $r = [$label]; foreach ($eqs as $e) $r[] = vis_mark($e['visual'][$k] ?? ''); $rows[] = $r; }
-    return k_table($s, M_(), $y, $sw - 2 * M_(), $rows, ['col_w' => array_merge([3.0], array_fill(0, count($eqs), 1.0)), 'size' => 7.5, 'row_h' => cm(0.5), 'label_cols' => [0],
-        'align' => array_merge(['l'], array_fill(0, count($eqs), 'c')), 'tint' => 'vis_tint']) + cm(0.3);
-}
 function p_check_matrix($s, $ctx, $y, $sw) {
     $y = k_section($s, M_(), $y, $sw - 2 * M_(), '로그 기반 자동 점검 매트릭스 (Automated Check Matrix)');
     $eqs = $ctx['equipments']; $n = count($eqs);
@@ -189,10 +182,6 @@ function p_result_side($s, $ctx, $y, $sw, $bottom) {
     k_text($s, $m + cm(0.3), $y + cm(0.08), cm(5), cm(0.5), '엔지니어 최종 Comment', 8.5, true, C_BLUE);
     k_text($s, $m + cm(0.3), $y + cm(0.5), $W - cm(0.6), cm(0.9), fit_lines($ctx['final_comment'], 2, (int)($W / cm(0.3))), 8.5, false, C_INK);
     return p_sign($s, $ctx, $y + cm(1.6), $sw);
-}
-function p_opinion_fit($prs, &$pages, $s, $ctx, $y, $sw, $sh, $title) {
-    if ($sh - cm(1.3) - $y < cm(9.5)) { $s = $prs->slide(); $pages[] = $s; $y = p_page_header($s, $ctx, "종합 의견 (Engineer's Opinion)", $sw); }
-    p_opinion($s, $ctx, $y, $sw, $sh - cm(1.3), $title);
 }
 function p_system_detail($s, $ctx, $e, $y, $sw, $vl = 10, $al = 6, $fl = 5) {
     $W = $sw - 2 * M_(); $m = M_();

@@ -350,7 +350,6 @@ function assign_set($cid, $uid, $kind) {
     else ins('mrs_customer_assign', ['customer_id' => $cid, 'user_id' => $uid, 'kind' => $kind, 'created_at' => now()]);
 }
 // 다른 사람의 정 담당을 바꾸거나 남을 배정할 수 있는 사람: 관리자·팀장(또는 사용자 관리 권한)
-function can_reassign($u) { return is_admin_u($u) || is_leader_u($u); }
 function assign_self($cid, $kind) {
     $u = me(); $cur = val("SELECT user_id FROM mrs_customer_assign WHERE customer_id=? AND kind='main'", [$cid]);
     if ($kind === 'main' && $cur && (int)$cur !== (int)$u['id'] && !can_manage_user($u, (int)$cur)) $kind = 'sub'; // 이미 다른 사람이 정이면 부로 (관리자·해당 팀장은 예외)
@@ -842,7 +841,7 @@ route('POST', 'reports', function () use ($in) {
 });
 route('GET', 'reports/(\d+)', function ($id) { need('report.view'); out(report_detail($id)); });
 route('PUT', 'reports/(\d+)', function ($id) use ($in) {
-    need('report.edit'); $r = report_get($id); db()->beginTransaction(); report_apply((int)$id, $in, false); run_analysis($r);
+    need('report.edit'); $r = report_get($id); db()->beginTransaction(); report_apply((int)$id, $in, false); run_analysis(report_get($id), false);
     if (in_array($r['status'], ['completed', 'sent'], true)) upd('mrs_report', ['status' => 'review'], $id); // 내용이 바뀌었으므로 최종 확정을 다시 받음
     db()->commit(); audit('report.update', $r['report_no']); out(report_detail($id));
 });
