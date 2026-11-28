@@ -131,6 +131,8 @@ function generate_files($r, $final) {
     $made = [];
     build_pptx($ctx, "$dir/$stem.pptx"); $made[] = ['pptx', 'standard', "$stem.pptx"];
     build_xlsx($ctx, "$dir/$stem.xlsx"); $made[] = ['xlsx', 'standard', "$stem.xlsx"];
+    try { build_pdf($ctx, "$dir/$stem.pdf"); $made[] = ['pdf', 'standard', "$stem.pdf"]; } // PDF 는 실패해도 PPT·엑셀은 그대로
+    catch (Throwable $e) { error_log('MRS PDF: ' . $e->getMessage()); }
     if ($r['template_id']) {
         $t = one("SELECT * FROM mrs_report_template WHERE id=?", [$r['template_id']]);
         if ($t && is_file(data_dir() . '/' . $t['stored_path'])) {

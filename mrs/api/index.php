@@ -2,7 +2,7 @@
 /* MRS - API 진입점.  호출: api/index.php?p=리소스/경로&쿼리...
    일부 웹호스팅은 PUT/DELETE/PATCH 를 막으므로 화면은 항상 POST + X-HTTP-Method-Override 헤더로 보냅니다. */
 require __DIR__ . '/lib.php';
-foreach (['catalog', 'parser', 'analyzer', 'ai', 'mailer', 'pptx_kit', 'pptx_report', 'xlsx', 'custom_template', 'report_service', 'perf', 'cdot_checks', 'util'] as $f) require __DIR__ . "/inc/$f.php";
+foreach (['catalog', 'parser', 'analyzer', 'ai', 'mailer', 'pptx_kit', 'pptx_report', 'pdf', 'pdf_report', 'xlsx', 'custom_template', 'report_service', 'perf', 'cdot_checks', 'util'] as $f) require __DIR__ . "/inc/$f.php";
 @ini_set('display_errors', '0');
 @ini_set('log_errors', '1');
 @set_time_limit(300);
@@ -13,12 +13,12 @@ header('X-Content-Type-Options: nosniff');
 
 function out($d, $code = 200) { if (ob_get_level()) ob_clean(); http_response_code($code); header('Content-Type: application/json; charset=utf-8'); echo json_encode($d, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR); exit; }
 function fail($m, $code = 400) { out(['detail' => $m], $code); }
-function send_file($path, $name, $type = 'application/octet-stream') {
+function send_file($path, $name, $type = 'application/octet-stream', $inline = false) {
     if (!is_file($path)) fail('파일이 없습니다.', 404);
     if (ob_get_level()) ob_end_clean();
     header('Content-Type: ' . $type);
     header('Content-Length: ' . filesize($path));
-    header("Content-Disposition: attachment; filename=\"" . rawurlencode($name) . "\"; filename*=UTF-8''" . rawurlencode($name));
+    header("Content-Disposition: " . ($inline ? 'inline' : 'attachment') . "; filename=\"" . rawurlencode($name) . "\"; filename*=UTF-8''" . rawurlencode($name));
     readfile($path); exit;
 }
 
@@ -893,7 +893,7 @@ route('PUT', 'reports/(\d+)/finalize', function ($id) use ($in) {
 });
 route('GET', 'reports/(\d+)/files/(\d+)', function ($rid, $fid) {
     need('report.view'); $f = one("SELECT * FROM mrs_report_file WHERE id=? AND report_id=?", [$fid, $rid]); if (!$f) fail('파일이 없습니다.', 404);
-    send_file(data_dir() . '/' . $f['stored_path'], $f['filename'], $f['file_format'] === 'pptx' ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    send_file(data_dir() . '/' . $f['stored_path'], $f['filename'], ['pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'pdf' => 'application/pdf'][$f['file_format']] ?? 'application/octet-stream', $f['file_format'] === 'pdf' && g('view'));
 });
 route('POST', 'reports/(\d+)/send', function ($id) use ($in) {
     $me = need('report.send'); $r = report_get($id);

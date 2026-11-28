@@ -422,7 +422,7 @@ async function pageNew(v) {
         h += `<h3 style="margin-top:16px">고객 양식 ${W.type === "custom" ? '<span class="chip critical">필수</span>' : '<span class="chip gray">선택</span>'}</h3>
           ${tpls.length ? `<div class="pick">${tpls.map((t) => `<div class="opt ${W.template_id === t.id ? "on" : ""}" data-tp="${t.id}"><div class="em">${t.file_format === "pptx" ? "📽️" : "📗"}</div><b>${esc(t.name)}</b><small>${esc(t.original_name)}</small></div>`).join("")}</div>`
             : '<div class="muted small">등록된 고객 양식이 없습니다. (고객 양식 메뉴에서 등록)</div>'}
-          <p class="small muted">※ 어떤 종류든 표준 PPT와 엑셀 두 가지 버전은 항상 함께 생성됩니다.</p>`;
+          <p class="small muted">※ 어떤 종류든 PPT · 엑셀 · PDF 세 가지 파일이 항상 함께 만들어집니다.</p>`;
         $("#sub").innerHTML = h;
         $$("[data-s]", z).forEach((o) => o.onclick = () => { W.subtype = o.dataset.s; W.plan = {}; sub(); });
         $$("[data-tp]", z).forEach((o) => o.onclick = () => { W.template_id = W.template_id === +o.dataset.tp ? null : +o.dataset.tp; sub(); });
@@ -594,7 +594,7 @@ async function pageReport(v, id) {
 
     <div class="grid g2" style="margin-top:22px">
       <div class="card"><h3>생성된 문서</h3>${R.files.length ? `<div class="grid">${R.files.map((f) => `<a class="file-card" href="${apiUrl(`reports/${R.id}/files/${f.id}`)}"><div class="file-ico ${f.format}">${f.format.toUpperCase()}</div>
-        <div class="grow"><b>${esc(f.filename)}</b><div class="small muted">${f.kind === "custom" ? "고객 양식 · " : ""}${fmtBytes(f.size)} · ${esc(f.created_at)}</div></div><span>⬇</span></a>`).join("")}</div>` : '<div class="empty"><div class="big">📄</div>아직 생성된 문서가 없습니다.</div>'}</div>
+        <div class="grow"><b>${esc(f.filename)}</b><div class="small muted">${f.kind === "custom" ? "고객 양식 · " : ""}${fmtBytes(f.size)} · ${esc(f.created_at)}</div></div>${f.format === "pdf" ? `<span class="btn sm" data-view="${apiUrl(`reports/${R.id}/files/${f.id}`)}&view=1">보기</span>` : ""}<span class="small muted">⬇</span></a>`).join("")}</div>` : '<div class="empty"><div class="big">📄</div>아직 생성된 문서가 없습니다.</div>'}</div>
       <div class="card"><h3>⑥ 고객 담당자 메일 발송</h3>
         ${["completed", "sent"].includes(R.status) && can("report.send") ? `<button class="btn primary" id="send-btn">✉️ 메일로 보내기</button>` : '<div class="muted">최종 확정된 보고서만 발송할 수 있습니다.</div>'}
         ${R.mails.length ? `<div class="timeline" style="margin-top:14px">${R.mails.map((m) => `<div class="tl"><b>${m.status === "sent" ? "발송 완료" : "발송 실패"}</b> <span class="small muted">${esc(m.at)}</span><div class="small">${esc(m.to.join(", "))}</div>${m.error ? `<div class="small" style="color:var(--red)">${esc(m.error)}</div>` : ""}</div>`).join("")}</div>` : ""}
@@ -614,7 +614,7 @@ async function pageReport(v, id) {
     $("#diag-save") && ($("#diag-save").onclick = (e) => busy(e.target, async () => { await saveDiag(); await reload("저장되었습니다."); }));
     $("#gen-btn") && ($("#gen-btn").onclick = (e) => busy(e.target, async () => {
       if (!$("#diag-ok").checked) throw new Error("진단 의견 검토 확인란을 체크하세요.");
-      await saveDiag(); await api(`reports/${id}/generate`, { method: "POST" }); await reload("검토본 PPT·엑셀이 생성되었습니다. 육안점검과 최종 Comment로 마무리하세요.");
+      await saveDiag(); await api(`reports/${id}/generate`, { method: "POST" }); await reload("검토본 PPT·엑셀·PDF가 생성되었습니다. 육안점검과 최종 Comment로 마무리하세요.");
     }));
     $("#svc-save") && ($("#svc-save").onclick = (e) => busy(e.target, async () => {
       const svc = {}; $$("[data-svc]", v).forEach((t) => { const [c, k] = t.dataset.svc.split("."); (svc[c] = svc[c] || {})[k] = t.value.trim(); });

@@ -339,3 +339,15 @@ table.t tbody tr:hover { background: #f8f9fb; }
 .variant { border-radius: 3px; background: var(--side); font-weight: 500; }
 .toast { background: var(--side); }
 @media (max-width: 900px) { .content { padding: 14px; } .top { padding: 8px 14px; } }
+/* 선택 카드 · 생성 문서: 작고 가지런하게 */
+.pick { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.opt { padding: 9px 30px 9px 40px; border-radius: 3px; min-height: 0; }
+.opt .em { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 18px; line-height: 1; }
+.opt b { margin-top: 0; font-size: 13px; font-weight: 600; } .opt small { display: block; font-size: 11.5px; line-height: 1.4; }
+.opt.on { background: rgba(25,105,165,.05); }
+.opt.on::after { width: 16px; height: 16px; font-size: 10px; top: 50%; right: 10px; transform: translateY(-50%); animation: none; }
+.file-card { padding: 7px 10px; gap: 10px; }
+.file-card b { font-size: 12.5px; font-weight: 500; word-break: break-all; }
+.file-ico { width: 34px; height: 34px; border-radius: 3px; font-size: 9.5px; font-weight: 700; }
+.file-ico.pptx { background: #c8553d; } .file-ico.xlsx { background: #2f7d4f; } .file-ico.pdf { background: #b3261e; }
+.opt:not(:has(.em)) { padding-left: 12px; }
