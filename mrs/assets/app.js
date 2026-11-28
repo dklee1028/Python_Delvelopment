@@ -723,7 +723,7 @@ function sendMail(R, reload) {
     <label class="f">추가 받는 사람 (쉼표로 구분)</label><input type="text" id="to-x" placeholder="name@example.com">
     <label class="f">참조(CC)</label><input type="text" id="cc" value="${esc(S.me.email || "")}">
     <label class="f">제목</label><input type="text" id="sj" value="[${esc(S.catalog?.company_name || "DATANEX")}] ${esc(R.title)} (${esc(R.inspection_date)})">
-    <label class="f">본문</label><textarea id="bd">안녕하세요, ${esc(R.customer_name)} 담당자님.\n\n${esc(R.title)}를 첨부와 같이 송부드립니다.\n검토 부탁드립니다.\n\n감사합니다.\n${esc(S.me.full_name || "")} ${esc(S.me.title || "")} 드림</textarea>
+    <label class="f">본문</label><textarea id="bd" style="min-height:220px">안녕하세요, ${esc(R.customer_name)} 담당자님.\n\n${esc(R.title)}를 첨부와 같이 송부드립니다.\n검토 부탁드립니다.\n\n감사합니다.\n${esc(S.me.full_name || "")} ${esc(S.me.title || "")} 드림</textarea>
     <label class="f">첨부</label>${R.files.map((f) => `<label class="file-row"><input type="checkbox" class="af" value="${f.id}" checked><div class="file-ico ${f.format}" style="width:30px;height:30px;font-size:9px">${f.format.toUpperCase()}</div><span class="grow">${esc(f.filename)}</span></label>`).join("")}
     <div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="go">보내기</button></div>`, "wide");
   $("#go", m).onclick = (e) => busy(e.target, async () => {
