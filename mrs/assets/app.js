@@ -61,6 +61,23 @@ const modalPrimary = (bg) => {
   return bs.length === 2 && bs[1].classList.contains("danger") && bs[0].hasAttribute("data-close") ? bs[1] : null;
 };
 // 모달 키보드: 맨 위 모달에만 적용 · Esc = 닫기(취소) · Enter = 확인/저장 · Tab 은 모달 안에서만 이동
+// 입력칸에서 Enter → 같은 창(카드·폼) 안의 다음 칸으로. 다음 칸이 없으면 null
+const FIELD_SEL = "input:not([type=hidden]):not([type=file]):not([type=button]):not([type=submit]):not([disabled]):not([readonly]), select:not([disabled]), textarea:not([disabled]):not([readonly])";
+const isTextInput = (t) => t.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "file", "hidden"].includes(t.type);
+function nextField(t, box) {
+  const f = $$(FIELD_SEL, box).filter((x) => x.offsetParent !== null);
+  const i = f.indexOf(t); return i >= 0 && i < f.length - 1 ? f[i + 1] : null;
+}
+function goNext(n) { n.focus(); if (n.select && isTextInput(n)) try { n.select(); } catch (_) {} }
+// 모달이 없는 일반 화면: 입력칸 Enter = 다음 칸 (로그인처럼 form 이면 마지막 칸 Enter = 제출)
+addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.altKey || e.isComposing || e.keyCode === 229) return;
+  if ($("#modal-root > .modal-bg")) return;
+  const t = e.target; if (!isTextInput(t) && t.tagName !== "SELECT") return;
+  const box = t.closest("form") || t.closest(".card") || t.closest(".content"); if (!box) return;
+  const n = nextField(t, box);
+  if (n) { e.preventDefault(); goNext(n); }
+});
 addEventListener("keydown", (e) => {
   const all = $$("#modal-root > .modal-bg"); const bg = all[all.length - 1]; if (!bg) return;
   if (e.isComposing || e.keyCode === 229) return; // 한글 입력 조합 중
@@ -71,8 +88,13 @@ addEventListener("keydown", (e) => {
     if (e.key === "Tab") { e.preventDefault(); $(".modal", bg).focus(); }
     return;
   }
+  if (e.key === "Enter" && e.ctrlKey) { const p = modalPrimary(bg); if (p) { e.preventDefault(); p.click(); } return; } // Ctrl+Enter = 어디서든 저장 (메모칸 포함)
   if (e.key === "Enter" && !e.shiftKey) {
-    if (["TEXTAREA", "BUTTON", "A", "SELECT"].includes(t.tagName)) return; // 줄바꿈 · 버튼 자체 동작
+    if (["TEXTAREA", "BUTTON", "A"].includes(t.tagName)) return; // 줄바꿈 · 버튼 자체 동작
+    // 입력칸·선택칸: 다음 칸으로, 마지막 칸이면 확인·저장
+    const n = (isTextInput(t) || t.tagName === "SELECT") && nextField(t, bg);
+    if (n) { e.preventDefault(); goNext(n); return; }
+    if (t.tagName === "INPUT" && !isTextInput(t)) return;
     const p = modalPrimary(bg); if (p) { e.preventDefault(); p.click(); }
   } else if (e.key === "Tab") {
     const f = $$("a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled])", bg).filter((x) => x.offsetParent !== null);
