@@ -39,16 +39,48 @@ async function busy(btn, fn) {
   try { return await fn(); } catch (e) { toast(e.message, "err"); } finally { btn.disabled = false; btn.innerHTML = html; }
 }
 function modal(html, cls = "") {
+  // 모달을 연 버튼에 포커스가 남아 있으면 Enter 가 그 버튼을 다시 눌러 모달이 겹겹이 쌓입니다 → 포커스를 모달 안으로 옮김
+  const opener = document.activeElement; if (opener && opener !== document.body) opener.blur();
   const bg = document.createElement("div");
   bg.className = "modal-bg";
-  bg.innerHTML = `<div class="modal ${cls}">${html}</div>`;
+  bg.innerHTML = `<div class="modal ${cls}" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
   bg.addEventListener("mousedown", (e) => { if (e.target === bg) bg.remove(); });
   $("#modal-root").appendChild(bg);
-  const onKey = (e) => { if (e.key === "Escape" && bg.isConnected) bg.remove(); if (!bg.isConnected) removeEventListener("keydown", onKey); };
-  addEventListener("keydown", onKey);
   $$("[data-close]", bg).forEach((b) => b.onclick = () => bg.remove());
+  // 첫 입력칸, 없으면 주 버튼(확인·저장)에 포커스
+  const first = $$("input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([readonly]):not([disabled]), select, textarea:not([readonly])", bg).find((x) => x.offsetParent !== null);
+  setTimeout(() => { if (bg.isConnected) (first || modalPrimary(bg) || $("[data-close]", bg) || $(".modal", bg)).focus(); }, 0);
+  // 닫히면 원래 버튼으로 포커스만 돌려줌 (다시 열리지 않음)
+  new MutationObserver((_, ob) => { if (!bg.isConnected) { ob.disconnect(); if (opener && opener.isConnected && !$(".modal-bg")) try { opener.focus({ preventScroll: true }); } catch (_) {} } }).observe($("#modal-root"), { childList: true });
   return bg;
 }
+// Enter 로 누를 버튼: 확인·저장(primary). 위험 버튼(삭제 등)은 [취소]+[위험] 두 개뿐인 확인창일 때만
+const modalPrimary = (bg) => {
+  const bs = $$(".actions .btn", bg).filter((b) => !b.disabled && b.offsetParent !== null && b.closest(".actions").parentElement.closest(".modal-bg") === bg);
+  const p = bs.filter((b) => b.classList.contains("primary")).pop(); if (p) return p;
+  return bs.length === 2 && bs[1].classList.contains("danger") && bs[0].hasAttribute("data-close") ? bs[1] : null;
+};
+// 모달 키보드: 맨 위 모달에만 적용 · Esc = 닫기(취소) · Enter = 확인/저장 · Tab 은 모달 안에서만 이동
+addEventListener("keydown", (e) => {
+  const all = $$("#modal-root > .modal-bg"); const bg = all[all.length - 1]; if (!bg) return;
+  if (e.isComposing || e.keyCode === 229) return; // 한글 입력 조합 중
+  if (e.key === "Escape") { e.preventDefault(); bg.remove(); return; }
+  const t = e.target;
+  if (!bg.contains(t)) { // 모달 밖(뒤 화면)에 포커스가 있으면 키가 뒤 화면 버튼을 누르지 않게 막음
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); const p = e.key === "Enter" && modalPrimary(bg); if (p) p.click(); else $(".modal", bg).focus(); }
+    if (e.key === "Tab") { e.preventDefault(); $(".modal", bg).focus(); }
+    return;
+  }
+  if (e.key === "Enter" && !e.shiftKey) {
+    if (["TEXTAREA", "BUTTON", "A", "SELECT"].includes(t.tagName)) return; // 줄바꿈 · 버튼 자체 동작
+    const p = modalPrimary(bg); if (p) { e.preventDefault(); p.click(); }
+  } else if (e.key === "Tab") {
+    const f = $$("a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled])", bg).filter((x) => x.offsetParent !== null);
+    if (!f.length) return;
+    if (e.shiftKey && (t === f[0] || !f.includes(t))) { e.preventDefault(); f[f.length - 1].focus(); }
+    else if (!e.shiftKey && (t === f[f.length - 1] || !f.includes(t))) { e.preventDefault(); f[0].focus(); }
+  }
+}, true);
 function confirmBox(msg) {
   return new Promise((ok) => {
     const m = modal(`<h3>확인</h3><p>${esc(msg)}</p><div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="cf-ok">확인</button></div>`);
