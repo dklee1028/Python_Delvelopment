@@ -295,7 +295,7 @@ async function pageDashboard(v) {
     <div class="tabs right" style="margin:0;border:0" id="dsc">${[["all", "전체"], ...(d.can_team ? [["team", "우리 팀"]] : []), ["mine", "내 담당"]].map(([k, l]) => `<button data-ds="${k}" class="${S.dashScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
     ${can("report.create") ? '<a class="btn primary sm" href="#/new">＋ 새 보고서</a>' : ""}</div>
   <div class="grid g4" style="margin-top:10px">
-    ${[["고객", d.customers, "customers"], ["관리 장비", d.equipment, "eq"], ["보관 로그", d.logs, "logs"], ["전체 보고서", d.reports, "reports"]].map(([l, n, k]) =>
+    ${[["고객", d.customers, "customers"], ["관리 장비", d.equipment, "eq"], ["보관 로그 · 최근 3개월", d.logs, "logs"], ["보고서 · 최근 3개월+진행 중", d.reports, "reports"]].map(([l, n, k]) =>
       `<div class="card kpi click" data-kp="${k}" tabindex="0"><div class="row"><div class="l">${l}</div><span class="go right">목록 →</span></div><div class="v" data-count="${n}">0</div></div>`).join("")}
   </div>
   <div class="grid g2" style="margin-top:12px">
@@ -341,13 +341,14 @@ function eqListModal(title, rows) {
   $("#eqf", m).oninput = draw; draw();
 }
 async function logListModal() {
-  const rows = await api("logs-recent?limit=300");
-  const m = modal(`<h3>보관 로그 <span class="small muted" style="font-weight:400">최근 ${rows.length}건</span></h3><input type="search" id="lgf" placeholder="고객·장비·파일 검색" style="max-width:260px">
+  let rows = await api("logs-recent?" + periodQs("lgm", new URLSearchParams({ limit: 500 })));
+  const m = modal(`<h3>보관 로그 <span class="small muted" style="font-weight:400" id="lgn">${rows.length}건</span></h3><div class="row" style="gap:6px"><input type="search" id="lgf" placeholder="고객·장비·파일 검색" style="max-width:260px">${periodHtml("lgm")}</div>
     <div style="overflow:auto;max-height:60vh;margin-top:8px"><table class="t"><thead><tr><th>수집 시점</th><th>고객</th><th>장비</th><th>파일</th><th>판정</th></tr></thead><tbody id="lgb"></tbody></table></div>
     <div class="actions"><button class="btn" data-close>닫기</button></div>`, "wide");
   const draw = () => { const q = $("#lgf", m).value.trim();
     $("#lgb", m).innerHTML = rows.filter((x) => !q || [x.customer_name, x.equipment_name, x.original_name].join(" ").includes(q)).map((x) => `<tr class="click" data-lc="${x.customer_id}"><td class="small">${esc(x.collected_at)}</td><td>${esc(x.customer_name)}</td><td>${esc(x.equipment_name || "-")}</td><td class="small">${esc(x.original_name)}</td><td>${chip(x.status || "normal")}</td></tr>`).join("");
     $$("[data-lc]", m).forEach((r) => r.onclick = () => { m.remove(); location.hash = "#/logs/" + r.dataset.lc; }); };
+  periodBind(m, "lgm", async () => { rows = await api("logs-recent?" + periodQs("lgm", new URLSearchParams({ limit: 500 }))); $("#lgn", m).textContent = rows.length + "건"; draw(); });
   $("#lgf", m).oninput = draw; draw();
 }
 function reportTable(rows, compact = false) {
@@ -733,6 +734,28 @@ function sendMail(R, reload) {
 }
 
 // ───────────────────────── 보고서 관리 ─────────────────────────
+// 목록 기간: 기본은 최근 3개월. 그 이전 자료는 '전체 기간' 또는 '기간 지정'으로 조회합니다
+const PERIOD_OPTS = [["3", "최근 3개월"], ["6", "최근 6개월"], ["12", "최근 1년"], ["all", "전체 기간"], ["custom", "기간 지정 (지난 자료 조회)"]];
+function periodGet(id) { S.period = S.period || {}; return S.period[id] || { k: "3", f: "", t: "" }; }
+function periodHtml(id) {
+  const p = periodGet(id);
+  return `<span class="row" style="gap:4px;flex-wrap:nowrap"><select data-pk="${id}" style="width:auto" title="목록 기간">${PERIOD_OPTS.map(([k, l]) => `<option value="${k}" ${p.k === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <span data-pc="${id}" class="row" style="gap:4px;flex-wrap:nowrap;${p.k === "custom" ? "" : "display:none"}"><input type="date" data-pf="${id}" value="${esc(p.f || "")}" style="width:auto"><span class="muted">~</span><input type="date" data-pt="${id}" value="${esc(p.t || "")}" style="width:auto"></span></span>`;
+}
+function periodBind(root, id, onChange) {
+  const sel = $(`[data-pk="${id}"]`, root), box = $(`[data-pc="${id}"]`, root), f = $(`[data-pf="${id}"]`, root), t = $(`[data-pt="${id}"]`, root);
+  if (!sel) return;
+  const save = () => { S.period[id] = { k: sel.value, f: f.value, t: t.value }; box.style.display = sel.value === "custom" ? "" : "none"; };
+  sel.onchange = () => { save(); if (sel.value === "custom" && !f.value && !t.value) return f.focus(); onChange(); };
+  f.onchange = t.onchange = () => { save(); onChange(); };
+}
+function periodQs(id, qs = new URLSearchParams()) {
+  const p = periodGet(id);
+  if (p.k === "all") qs.set("period", "all");
+  else if (p.k === "custom") { qs.set("period", "custom"); if (p.f) qs.set("date_from", p.f); if (p.t) qs.set("date_to", p.t); }
+  else if (p.k !== "3") { const d = new Date(); d.setMonth(d.getMonth() - +p.k); qs.set("date_from", d.toISOString().slice(0, 10)); }
+  return qs;
+}
 async function pageReports(v) {
   const C = S.catalog;
   v.innerHTML = `<div class="card"><div class="row"><input type="search" id="q" placeholder="제목·번호·고객 검색" style="max-width:280px">
@@ -740,12 +763,15 @@ async function pageReports(v) {
     <select id="ft" style="max-width:170px"><option value="">전체 종류</option>${Object.entries(C.report_types).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
     <select id="fsc" style="max-width:140px"><option value="all">전체 보고서</option>${["admin", "manager"].includes(S.me.role) || can("user.manage") ? '<option value="team">우리 팀</option>' : ""}<option value="mine">내 보고서</option></select>
     <select id="fen" style="max-width:160px"><option value="">모든 담당자</option>${(C.engineers || []).map((u) => `<option value="${u.id}" ${String(u.id) === String(S.repEngineer || "") ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select>
-    ${can("report.create") ? '<a class="btn primary right" href="#/new">＋ 새 보고서</a>' : ""}</div><div id="rl" style="margin-top:14px"></div></div>`;
+    ${periodHtml("rep")}
+    ${can("report.create") ? '<a class="btn primary right" href="#/new">＋ 새 보고서</a>' : ""}</div>
+    <div class="small muted" style="margin-top:6px">기본은 최근 3개월(점검일 기준) 보고서와 아직 끝나지 않은 보고서만 보입니다. 이전 보고서는 기간을 바꿔 조회하세요.</div><div id="rl" style="margin-top:10px"></div></div>`;
   const load = async () => {
-    const qs = new URLSearchParams({ q: $("#q").value, status: $("#fs").value, report_type: $("#ft").value, scope: $("#fsc").value, engineer_id: $("#fen").value });
+    const qs = periodQs("rep", new URLSearchParams({ q: $("#q").value, status: $("#fs").value, report_type: $("#ft").value, scope: $("#fsc").value, engineer_id: $("#fen").value }));
     const rows = await api("reports?" + qs); $("#rl").innerHTML = reportTable(rows); bindReportRows($("#rl"), load);
   };
   let t; $("#q").oninput = () => { clearTimeout(t); t = setTimeout(load, 250); }; $("#fs").onchange = load; $("#ft").onchange = load; $("#fsc").onchange = load; $("#fen").onchange = () => { S.repEngineer = $("#fen").value; load(); };
+  periodBind(v, "rep", load);
   await load();
 }
 
@@ -1017,7 +1043,7 @@ async function pageLogs(v, cid) {
   const up = can("log.upload"); const eqs = c.equipment; const eqName = Object.fromEntries(eqs.map((e) => [e.id, e.name]));
   v.innerHTML = `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><select id="lc" style="max-width:280px">${custs.map((x) => `<option value="${x.id}" ${x.id === cid ? "selected" : ""}>${x.my_role ? (x.my_role === "main" ? "[정] " : "[부] ") : ""}${esc(x.name)}</option>`).join("")}</select>
     <select id="le" style="max-width:220px"><option value="">전체 장비</option>${eqs.map((e) => `<option value="${e.id}">${esc(e.name)} (${esc(e.model)})</option>`).join("")}</select>
-    <input type="date" id="df" style="max-width:160px"><span class="muted">~</span><input type="date" id="dt" style="max-width:160px"><label class="small row right" style="gap:6px"><input type="checkbox" id="shw-d" ${S.showDisposed ? "checked" : ""}> 파기장비 포함</label>
+    ${periodHtml("log")}<label class="small row right" style="gap:6px"><input type="checkbox" id="shw-d" ${S.showDisposed ? "checked" : ""}> 파기장비 포함</label>
     <button class="btn sm" data-cmd="regular">📋 점검 명령어</button></div>
     ${up ? `<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap"><label class="small muted">로그 수집 시점</label><input type="datetime-local" id="ct" style="max-width:220px" value="${nowLocal()}"><span class="small muted">로그는 <b>장비별로</b> 아래 장비 칸에 넣으세요. 섞어 넣으면 장비를 구분할 수 없습니다.</span></div>` : ""}</div>
   <div class="grid ${eqs.length > 1 ? "g2" : ""}" style="margin-top:16px">${eqs.map((e) => `<div class="card" style="${e.disposed ? "opacity:.6" : ""}">
@@ -1031,7 +1057,7 @@ async function pageLogs(v, cid) {
   $("#lc").onchange = () => location.hash = "#/logs/" + $("#lc").value;
   bindCmd(v);
   const load = async () => {
-    const qs = new URLSearchParams(); if (S.showDisposed) qs.set("disposed", "1"); if ($("#le").value) qs.set("equipment_id", $("#le").value); if ($("#df").value) qs.set("date_from", $("#df").value); if ($("#dt").value) qs.set("date_to", $("#dt").value);
+    const qs = new URLSearchParams(); if (S.showDisposed) qs.set("disposed", "1"); if ($("#le").value) qs.set("equipment_id", $("#le").value); periodQs("log", qs);
     const [logs, perfs] = await Promise.all([api(`customers/${cid}/logs?` + qs), api(`customers/${cid}/perf?` + qs)]);
     $("#pl").innerHTML = perfs.length ? `<div style="overflow:auto"><table class="t"><thead><tr><th>파일</th><th>장비</th><th>수집 기간</th><th>분석</th><th>원본 보관</th><th></th></tr></thead><tbody>${perfs.map((p) => `<tr>
       <td><b class="small">${esc(p.original_name)}</b><div class="small muted">${fmtSize(p.size_bytes)} · ${esc(p.created_at)}</div></td><td class="small">${esc(eqName[p.equipment_id] || "-")}</td>
@@ -1052,7 +1078,7 @@ async function pageLogs(v, cid) {
     $$("[data-as]", v).forEach((s) => s.onchange = async () => { await api(`logs/${s.dataset.as}?equipment_id=${s.value}`, { method: "PATCH" }); toast("장비가 지정되었습니다.", "ok"); load(); });
     $$("[data-rm]", v).forEach((b) => b.onclick = async () => { if (await confirmBox("로그를 삭제할까요?")) { await api("logs/" + b.dataset.rm, { method: "DELETE" }); load(); } });
   };
-  ["le", "df", "dt"].forEach((k) => $("#" + k).onchange = load);
+  $("#le").onchange = load; periodBind(v, "log", load);
   $("#shw-d").onchange = () => { S.showDisposed = $("#shw-d").checked; route(); };
   $$("[data-drop]", v).forEach((d) => { const eid = +d.dataset.drop; setupDrop(d, $("input", d), async (files) => {
     const box = $(`[data-up="${eid}"]`, v);
@@ -1143,7 +1169,7 @@ async function pageUsers(v) {
       ${depts.map((d) => `<tr><td><input type="number" data-dso="${d.id}" value="${d.sort_no}" style="width:60px"></td><td><input type="text" data-dnm="${d.id}" value="${esc(d.name)}"></td><td class="small">${d.users}명</td>
         <td style="white-space:nowrap"><button class="btn sm" data-dsv="${d.id}">저장</button><button class="btn sm danger" data-ddl="${d.id}">삭제</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted small">아직 부서가 없습니다.</td></tr>'}
       <tr><td><input type="number" id="nd-so" value="${depts.length + 1}" style="width:60px"></td><td><input type="text" id="nd-nm" placeholder="새 부서 이름 (예: 기술지원1팀)"></td><td></td><td><button class="btn sm primary" id="nd-add">＋ 추가</button></td></tr></tbody></table></div>` : ""}
-    ${admin ? '<div class="card" style="margin-top:16px"><h3>감사 로그</h3><div id="audit"></div></div>' : ""}`;
+    ${admin ? `<div class="card" style="margin-top:16px"><div class="row" style="margin-bottom:8px"><h3 style="margin:0">감사 로그</h3><span class="right">${periodHtml("aud")}</span></div><div id="audit"></div></div>` : ""}`;
   $("#u-df").onchange = (e) => { S.userDept = e.target.value; route(); };
   $$("[data-dept]", v).forEach((sel) => sel.onchange = async () => { try { await api(`users/${sel.dataset.dept}/dept`, { method: "POST", body: { dept_id: sel.value ? +sel.value : null } }); toast("부서를 지정했습니다.", "ok"); } catch (e) { toast(e.message, "err"); } route(); });
   if (admin) {
@@ -1192,8 +1218,10 @@ async function pageUsers(v) {
   $$("[data-eu]", v).forEach((b) => b.onclick = () => form(users.find((u) => u.id === +b.dataset.eu)));
   $$("[data-ru]", v).forEach((b) => b.onclick = async () => { if (await confirmBox("사용자를 삭제할까요?")) { await api("users/" + b.dataset.ru, { method: "DELETE" }).catch((e) => toast(e.message, "err")); route(); } });
   if (admin) {
-    const logs = await api("audit?limit=50");
+    const loadAudit = async () => { const logs = await api("audit?" + periodQs("aud", new URLSearchParams({ limit: 300 })));
     $("#audit").innerHTML = `<table class="t"><thead><tr><th>시각</th><th>사용자</th><th>작업</th><th>대상</th></tr></thead><tbody>${logs.map((l) => `<tr><td class="small muted">${esc(l.at.replace("T", " ").slice(0, 16))}</td><td>${esc(l.user)}</td><td class="mono small">${esc(l.action)}</td><td class="small">${esc(l.target)} ${esc(l.detail).slice(0, 80)}</td></tr>`).join("")}</tbody></table>`;
+      $("#audit").insertAdjacentHTML("beforeend", logs.length ? "" : '<div class="small muted">이 기간의 기록이 없습니다.</div>'); };
+    periodBind(v, "aud", loadAudit); await loadAudit();
   }
 }
 

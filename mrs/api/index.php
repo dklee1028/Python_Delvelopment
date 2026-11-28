@@ -265,7 +265,8 @@ route('POST', 'users/(\d+)/transfer', function ($id) use ($in) {
 });
 route('GET', 'audit', function () {
     need('user.manage');
-    $rows = all("SELECT * FROM mrs_audit_log ORDER BY id DESC LIMIT " . min(500, max(1, (int)g('limit', 100))));
+    $p = []; $w = period_where('at', $p);
+    $rows = all("SELECT * FROM mrs_audit_log WHERE 1=1$w ORDER BY id DESC LIMIT " . min(500, max(1, (int)g('limit', 100))), $p);
     out(array_map(function ($r) { return ['at' => str_replace(' ', 'T', $r['at']), 'user' => $r['user_name'] ?: '-', 'action' => $r['action'], 'target' => $r['target'] ?: '', 'detail' => $r['detail'] ?: '']; }, $rows));
 });
 
@@ -556,20 +557,34 @@ route('GET', 'customers/(\d+)/logs', function ($cid) {
     need('customer.view'); $sql = "SELECT * FROM mrs_log_file WHERE customer_id=?"; $p = [$cid];
     if (!g('disposed')) $sql .= " AND (equipment_id IS NULL OR equipment_id NOT IN (SELECT id FROM mrs_equipment WHERE disposed_at IS NOT NULL))";
     if ($e = (int)g('equipment_id', 0)) { $sql .= " AND equipment_id=?"; $p[] = $e; }
-    if ($d = g('date_from')) { $sql .= " AND collected_at>=?"; $p[] = substr($d, 0, 10) . ' 00:00:00'; }
-    if ($d = g('date_to')) { $sql .= " AND collected_at<=?"; $p[] = substr($d, 0, 10) . ' 23:59:59'; }
+    $sql .= period_where('collected_at', $p);
     $names = eq_names($cid);
     out(array_map(function ($l) use ($names) { return log_out($l, $names); }, all("$sql ORDER BY collected_at DESC LIMIT 500", $p)));
 });
 /* 전체 고객의 최근 로그 (대시보드 '보관 로그' 카드) */
 route('GET', 'logs-recent', function () {
     need('customer.view'); log_stat_fill();
-    $lim = max(1, min(1000, (int)g('limit', 300)));
+    $lim = max(1, min(1000, (int)g('limit', 300))); $p = []; $w = period_where('l.collected_at', $p);
     out(array_map(function ($l) { return ['id' => (int)$l['id'], 'customer_id' => (int)$l['customer_id'], 'customer_name' => $l['customer_name'] ?? '', 'equipment_name' => $l['equipment_name'] ?? '',
         'original_name' => $l['original_name'], 'collected_at' => substr($l['collected_at'], 0, 16), 'status' => $l['status'] ?: 'normal']; },
         all("SELECT l.id, l.customer_id, l.original_name, l.collected_at, l.status, c.name customer_name, e.name equipment_name FROM mrs_log_file l
-            LEFT JOIN mrs_customer c ON c.id=l.customer_id LEFT JOIN mrs_equipment e ON e.id=l.equipment_id ORDER BY l.collected_at DESC, l.id DESC LIMIT $lim")));
+            LEFT JOIN mrs_customer c ON c.id=l.customer_id LEFT JOIN mrs_equipment e ON e.id=l.equipment_id WHERE 1=1$w ORDER BY l.collected_at DESC, l.id DESC LIMIT $lim", $p)));
 });
+/* 목록 기간: 기본은 최근 3개월(KEEP_MONTHS). period=all 이면 전체, date_from·date_to 로 지난 자료 조회.
+   날짜만('YYYY-MM-DD') 넣은 열과 시각까지 넣은 열 모두 맞도록 '>= 시작일' AND '< 끝날 다음날' 로 비교합니다. */
+const KEEP_MONTHS = 3;
+function keep_from() { return date('Y-m-d', strtotime('-' . KEEP_MONTHS . ' months')); }
+function is_ymd($d) { return is_string($d) && preg_match('/^\d{4}-\d{2}-\d{2}$/', substr($d, 0, 10)); }
+function period_where($col, &$p) {
+    if (g('period') === 'all') return '';
+    $f = (string)g('date_from', ''); $t = (string)g('date_to', ''); $w = '';
+    if (!is_ymd($f) && !is_ymd($t) && g('period') !== 'custom') $f = keep_from();
+    if (is_ymd($f)) { $w .= " AND $col>=?"; $p[] = substr($f, 0, 10); }
+    if (is_ymd($t)) { $w .= " AND $col<?"; $p[] = date('Y-m-d', strtotime(substr($t, 0, 10) . ' +1 day')); }
+    return $w;
+}
+/* 기본(최근 N개월) 보기인지: 진행 중 보고서는 날짜와 상관없이 보여 주려고 씀 */
+function period_is_default() { return g('period') !== 'all' && g('period') !== 'custom' && !is_ymd((string)g('date_from', '')) && !is_ymd((string)g('date_to', '')); }
 function log_get($id) { $l = one("SELECT * FROM mrs_log_file WHERE id=?", [$id]); if (!$l) fail('로그를 찾을 수 없습니다.', 404); return $l; }
 route('GET', 'logs/(\d+)', function ($id) { need('customer.view'); $l = log_get($id); $d = log_out($l, eq_names($l['customer_id'])); $p = jd($l['parsed'], []); $d['parsed'] = $p; $d['analysis'] = analyze([], $p); out($d); });
 route('PATCH', 'logs/(\d+)', function ($id) {
@@ -644,6 +659,7 @@ route('GET', 'customers/(\d+)/perf', function ($cid) {
     need('customer.view'); $sql = "SELECT * FROM mrs_perf_archive WHERE customer_id=?"; $p = [$cid];
     if ($e = (int)g('equipment_id', 0)) { $sql .= " AND equipment_id=?"; $p[] = $e; }
     if (!g('disposed')) $sql .= " AND equipment_id NOT IN (SELECT id FROM mrs_equipment WHERE disposed_at IS NOT NULL)";
+    $sql .= period_where('created_at', $p);
     out(array_map('perf_out', all("$sql ORDER BY created_at DESC LIMIT 200", $p)));
 });
 
@@ -786,10 +802,11 @@ function eq_status_rows($me, $scope) {
     }, $rows);
 }
 route('GET', 'dashboard', function () {
-    $me = need('report.view'); $scope = g('scope', 'all'); $sc = report_scope_sql($me, $scope);
+    $me = need('report.view'); $scope = g('scope', 'all'); $kf = keep_from();
+    $sc = report_scope_sql($me, $scope) . " AND (inspection_date>='$kf' OR status NOT IN ('completed','sent'))"; // 최근 3개월 + 진행 중
     $bs = []; foreach (all("SELECT status, COUNT(*) n FROM mrs_report WHERE 1=1$sc GROUP BY status") as $x) $bs[$x['status']] = (int)$x['n'];
     $bt = []; foreach (all("SELECT report_type, COUNT(*) n FROM mrs_report WHERE 1=1$sc GROUP BY report_type") as $x) $bt[$x['report_type']] = (int)$x['n'];
-    out(['customers' => (int)val("SELECT COUNT(*) FROM mrs_customer"), 'equipment' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE is_active=1 AND disposed_at IS NULL"), 'logs' => (int)val("SELECT COUNT(*) FROM mrs_log_file"),
+    out(['customers' => (int)val("SELECT COUNT(*) FROM mrs_customer"), 'equipment' => (int)val("SELECT COUNT(*) FROM mrs_equipment WHERE is_active=1 AND disposed_at IS NULL"), 'logs' => (int)val("SELECT COUNT(*) FROM mrs_log_file WHERE collected_at>=?", [$kf]), 'keep_months' => KEEP_MONTHS, 'keep_from' => $kf,
         'reports' => array_sum($bs), 'this_month' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE inspection_date LIKE ?$sc", [date('Y-m') . '%']), 'by_status' => (object)$bs, 'by_type' => (object)$bt,
         'recent' => array_map('report_brief', all("SELECT * FROM mrs_report WHERE 1=1$sc ORDER BY updated_at DESC, id DESC LIMIT 8")),
         'attention' => array_map('report_brief', all("SELECT * FROM mrs_report WHERE overall_status='critical'$sc ORDER BY updated_at DESC LIMIT 8")),
@@ -802,6 +819,9 @@ route('GET', 'reports', function () {
     if ($v = g('status')) { $sql .= " AND r.status=?"; $p[] = $v; }
     if ($v = g('report_type')) { $sql .= " AND r.report_type=?"; $p[] = $v; }
     if ($v = (int)g('customer_id', 0)) { $sql .= " AND r.customer_id=?"; $p[] = $v; }
+    // 기본은 최근 3개월(점검일 기준) + 아직 끝나지 않은 보고서. 그 이전은 기간을 정해 조회
+    $pp = []; $w = period_where('r.inspection_date', $pp);
+    if ($w) { $w = substr($w, 5); $sql .= period_is_default() ? " AND (($w) OR r.status NOT IN ('completed','sent'))" : " AND $w"; $p = array_merge($p, $pp); }
     out(array_map('report_brief', all("$sql ORDER BY r.updated_at DESC, r.id DESC LIMIT 500", $p)));
 });
 function report_apply($rid, $in, $isNew) {
