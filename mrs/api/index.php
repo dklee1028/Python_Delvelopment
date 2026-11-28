@@ -84,9 +84,7 @@ function user_out($u) {
         'is_active' => (bool)(int)$u['is_active'], 'must_change_pw' => (bool)(int)$u['must_change_pw'], 'last_login_at' => $u['last_login_at'],
         'dept_id' => empty($u['dept_id']) ? null : (int)$u['dept_id'], 'dept_name' => empty($u['dept_id']) ? '' : (string)val("SELECT name FROM mrs_dept WHERE id=?", [$u['dept_id']]),
         'pw_due_at' => $u['pw_due_at'] ?? null, 'pw_expired' => !empty($u['pw_due_at']) && $u['pw_due_at'] <= now(),
-        'leader_id' => empty($u['leader_id']) ? null : (int)$u['leader_id'], 'leader_name' => empty($u['leader_id']) ? '' : (string)val("SELECT COALESCE(NULLIF(full_name,''), username) FROM mrs_user WHERE id=?", [$u['leader_id']]),
-        'team_size' => (int)val("SELECT COUNT(*) FROM mrs_user WHERE leader_id=? AND is_active=1", [$u['id']]),
-        'assigned' => ['main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$u['id']]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='sub'", [$u['id']]),
+        'assigned' => ['main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$u['id']]),
             'sub_all' => (int)val("SELECT COUNT(*) FROM mrs_customer WHERE id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')", [$u['id']])]]; // 정이 아닌 사이트는 모두 부
 }
 route('POST', 'auth/login', function () use ($in) {
@@ -207,34 +205,17 @@ route('DELETE', 'ignore-rules/(\d+)', function ($id) {
     q("DELETE FROM mrs_ignore_rule WHERE id=?", [$id]); audit('ignore.delete', $r['title'] ?: $r['rule_key']);
     ignore_changed($r['equipment_id'] ? (int)$r['equipment_id'] : null, (int)g('report_id', 0)); out(['ok' => true]);
 });
-/* ----- 팀: 사용자마다 팀장(leader_id) 1명. 관리자는 전체, 팀장은 본인과 팀원을 관리합니다 ----- */
+/* ----- 팀 = 같은 부서. 관리자는 전체, 팀장(역할)은 본인 부서 사람들을 관리합니다 ----- */
 function is_admin_u($u) { return $u['role'] === 'admin' || in_array('user.manage', $u['perms'], true); }
 function is_leader_u($u) { return $u['role'] === 'manager'; }
-function team_ids($uid) { return array_map('intval', array_column(all("SELECT id FROM mrs_user WHERE leader_id=?", [(int)$uid]), 'id')); }
+function team_ids($uid) { $d = (int)val("SELECT dept_id FROM mrs_user WHERE id=?", [(int)$uid]); return $d ? array_map('intval', array_column(all("SELECT id FROM mrs_user WHERE dept_id=? AND id<>?", [$d, (int)$uid]), 'id')) : []; }
 function can_manage_user($me, $tid) {
     if (!$tid) return false;
     if (is_admin_u($me) || (int)$tid === (int)$me['id']) return true;
-    return is_leader_u($me) && (int)val("SELECT COUNT(*) FROM mrs_user WHERE id=? AND leader_id=?", [(int)$tid, $me['id']]) > 0;
+    return is_leader_u($me) && in_array((int)$tid, team_ids($me['id']), true);
 }
-/* 현황을 볼 수 있는 사용자: 관리자 = 전체(null), 팀장 = 본인+팀원, 그 외 = 본인 */
+/* 현황을 볼 수 있는 사용자: 관리자 = 전체(null), 팀장 = 본인+같은 부서, 그 외 = 본인 */
 function visible_user_ids($me) { if (is_admin_u($me)) return null; return is_leader_u($me) ? array_merge([(int)$me['id']], team_ids($me['id'])) : [(int)$me['id']]; }
-route('POST', 'users/(\d+)/team', function ($id) use ($in) {
-    $me = need_login(); $u = one("SELECT * FROM mrs_user WHERE id=?", [$id]); if (!$u) fail('사용자를 찾을 수 없습니다.', 404);
-    $lid = (int)($in['leader_id'] ?? 0) ?: null;
-    if ($lid !== null && !one("SELECT id FROM mrs_user WHERE id=? AND is_active=1 AND role IN ('manager','admin')", [$lid])) fail('팀장은 팀장(또는 관리자) 역할인 사용자만 지정할 수 있습니다.');
-    if ($lid !== null && $lid === (int)$u['id']) fail('자기 자신을 팀장으로 지정할 수 없습니다.');
-    if (!is_admin_u($me)) {
-        if (!is_leader_u($me)) fail('팀원 지정은 관리자와 팀장만 할 수 있습니다.', 403);
-        $cur = empty($u['leader_id']) ? null : (int)$u['leader_id'];
-        if (in_array($u['role'], ['admin', 'manager'], true)) fail('관리자·팀장 계정은 관리자만 팀을 바꿀 수 있습니다.', 403);
-        if ($lid !== null && $lid !== (int)$me['id']) fail('팀장은 본인 팀으로만 지정할 수 있습니다.', 403);
-        if ($lid === null && $cur !== (int)$me['id']) fail('본인 팀원만 뺄 수 있습니다.', 403);
-        if ($lid !== null && $cur !== null && $cur !== (int)$me['id']) fail('다른 팀 소속입니다. 관리자에게 요청하세요.', 403);
-    }
-    upd('mrs_user', ['leader_id' => $lid, 'updated_at' => now()], $id);
-    audit('user.team', $u['username'], $lid ? (string)val("SELECT username FROM mrs_user WHERE id=?", [$lid]) : '팀 없음');
-    out(user_out(one("SELECT * FROM mrs_user WHERE id=?", [$id])));
-});
 route('POST', 'users', function () use ($in) { user_save(null, $in); });
 route('PUT', 'users/(\d+)', function ($id) use ($in) { user_save((int)$id, $in); });
 route('DELETE', 'users/(\d+)', function ($id) {
@@ -253,12 +234,12 @@ route('DELETE', 'users/(\d+)', function ($id) {
 route('POST', 'users/(\d+)/transfer', function ($id) use ($in) {
     $me = need_login(); $from = one("SELECT * FROM mrs_user WHERE id=?", [$id]); $to = one("SELECT * FROM mrs_user WHERE id=? AND is_active=1", [(int)($in['to_user_id'] ?? 0)]);
     if (!$from || !$to) fail('사용자를 찾을 수 없습니다.', 404);
-    if (!can_manage_user($me, $from['id']) || !can_manage_user($me, $to['id'])) fail('담당 이관은 관리자, 또는 본인 팀 안에서 팀장만 할 수 있습니다.', 403);
+    if (!can_manage_user($me, $from['id']) || !can_manage_user($me, $to['id'])) fail('담당 이관은 관리자, 또는 같은 부서 안에서 팀장만 할 수 있습니다.', 403);
     if ((int)$from['id'] === (int)$to['id']) fail('같은 사용자입니다.');
     $only = array_map('intval', (array)($in['customer_ids'] ?? [])); $n = 0;
-    foreach (all("SELECT * FROM mrs_customer_assign WHERE user_id=?", [$from['id']]) as $a) {
+    foreach (all("SELECT * FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$from['id']]) as $a) {
         if ($only && !in_array((int)$a['customer_id'], $only, true)) continue;
-        assign_set((int)$a['customer_id'], (int)$to['id'], $a['kind']); q("DELETE FROM mrs_customer_assign WHERE id=?", [$a['id']]); $n++;
+        assign_set((int)$a['customer_id'], (int)$to['id']); $n++;
     }
     if (b($in['reports'] ?? false)) q("UPDATE mrs_report SET engineer_id=? WHERE engineer_id=? AND status<>'completed'", [$to['id'], $from['id']]);
     audit('assign.transfer', $from['username'] . ' → ' . $to['username'], "{$n}개 고객");
@@ -297,7 +278,7 @@ route('GET', 'legacy/customers', function () {
 route('POST', 'legacy/customers/([^/]+)/link', function ($lid) {
     need('customer.edit'); $src = legacy_get($lid); if (!$src) fail('기존 고객 DB에서 찾을 수 없습니다.', 404);
     $ex = one("SELECT id FROM mrs_customer WHERE legacy_customer_id=?", [$lid]); $kind = assign_kind($GLOBALS['in']['kind'] ?? '');
-    if ($ex) { upd('mrs_customer', ['name' => $src['name'], 'address' => $src['address'], 'updated_at' => now()], $ex['id']); if ($kind) assign_self((int)$ex['id'], $kind); out(customer_out($ex['id'])); }
+    if ($ex) { upd('mrs_customer', ['name' => $src['name'], 'address' => $src['address'], 'updated_at' => now()], $ex['id']); if ($kind) assign_self((int)$ex['id'], false); out(customer_out($ex['id'])); }
     $cid = ins('mrs_customer', ['legacy_customer_id' => $lid, 'name' => $src['name'], 'address' => $src['address'], 'site' => '', 'memo' => '', 'created_at' => now(), 'updated_at' => now()]);
     // PMS 고객에 등록된 담당자1·2를 전산담당자 초기값으로 가져옵니다(이후 MRS 에서 따로 관리).
     $k = 0;
@@ -307,7 +288,7 @@ route('POST', 'legacy/customers/([^/]+)/link', function ($lid) {
         ins('mrs_customer_contact', ['customer_id' => $cid, 'name' => $nm, 'phone' => $src[$c . '_phone'] ?? '', 'email' => $em, 'department' => '', 'position' => '',
             'receive_reports' => $em ? 1 : 0, 'is_primary' => $k++ === 0 ? 1 : 0, 'created_at' => now(), 'updated_at' => now()]);
     }
-    if ($kind) assign_self((int)$cid, $kind);
+    if ($kind) assign_self((int)$cid, false);
     audit('customer.link', $src['name']);
     out(customer_out($cid));
 });
@@ -344,24 +325,26 @@ function eq_access_fill($eid, $acc) {
     upd('mrs_equipment', $d, $eid);
 }
 /* ----- 담당 배정 (정/부) ----- */
-function assign_kind($k) { return in_array($k, ['main', 'sub'], true) ? $k : ''; }
-function assign_set($cid, $uid, $kind) {
-    if ($kind === 'main') q("UPDATE mrs_customer_assign SET kind='sub' WHERE customer_id=? AND kind='main' AND user_id<>?", [$cid, $uid]); // 정은 고객당 1명, 기존 정은 부로
-    $ex = one("SELECT id FROM mrs_customer_assign WHERE customer_id=? AND user_id=?", [$cid, $uid]);
-    if ($ex) upd('mrs_customer_assign', ['kind' => $kind], $ex['id']);
-    else ins('mrs_customer_assign', ['customer_id' => $cid, 'user_id' => $uid, 'kind' => $kind, 'created_at' => now()]);
+/* 정 담당은 고객당 1명만 저장합니다. 정이 아닌 사람에게 그 고객은 자동으로 '부'라서 부는 따로 저장하지 않습니다. */
+function assign_kind($k) { return $k === 'main' ? 'main' : ''; }
+function assign_set($cid, $uid) {
+    q("DELETE FROM mrs_customer_assign WHERE customer_id=?", [$cid]); // 이전 정(과 예전 방식의 부 기록)을 지우고
+    ins('mrs_customer_assign', ['customer_id' => $cid, 'user_id' => $uid, 'kind' => 'main', 'created_at' => now()]);
 }
-// 다른 사람의 정 담당을 바꾸거나 남을 배정할 수 있는 사람: 관리자·팀장(또는 사용자 관리 권한)
-function assign_self($cid, $kind) {
-    $u = me(); $cur = val("SELECT user_id FROM mrs_customer_assign WHERE customer_id=? AND kind='main'", [$cid]);
-    if ($kind === 'main' && $cur && (int)$cur !== (int)$u['id'] && !can_manage_user($u, (int)$cur)) $kind = 'sub'; // 이미 다른 사람이 정이면 부로 (관리자·해당 팀장은 예외)
-    assign_set($cid, (int)$u['id'], $kind);
+// 다른 사람이 정인 고객을 가져오거나 남을 정으로 지정할 수 있는 사람: 관리자, 또는 같은 부서의 팀장
+function assign_self($cid, $strict = true) {
+    $u = me(); $cur = (int)val("SELECT user_id FROM mrs_customer_assign WHERE customer_id=? AND kind='main'", [$cid]);
+    if ($cur && $cur !== (int)$u['id'] && !can_manage_user($u, $cur)) {
+        if (!$strict) return false;
+        fail('이미 ' . user_name($cur) . ' 님이 정 담당입니다. 정 담당 변경은 관리자 또는 같은 부서 팀장이 할 수 있습니다.', 409);
+    }
+    assign_set($cid, (int)$u['id']); return true;
 }
 function assign_names($kind) { $m = []; foreach (all("SELECT a.customer_id, u.full_name, u.username FROM mrs_customer_assign a JOIN mrs_user u ON u.id=a.user_id WHERE a.kind=? ORDER BY a.id", [$kind]) as $r) $m[$r['customer_id']] = ($m[$r['customer_id']] ?? '') ? $m[$r['customer_id']] . ', ' . ($r['full_name'] ?: $r['username']) : ($r['full_name'] ?: $r['username']); return $m; }
 function cust_assign($cid) {
     $rows = all("SELECT a.user_id, a.kind, u.full_name, u.username FROM mrs_customer_assign a JOIN mrs_user u ON u.id=a.user_id WHERE a.customer_id=? ORDER BY a.kind, a.id", [$cid]);
     $main = null; $subs = [];
-    foreach ($rows as $r) { $x = ['id' => (int)$r['user_id'], 'name' => $r['full_name'] ?: $r['username']]; if ($r['kind'] === 'main') $main = $x; else $subs[] = $x; }
+    foreach ($rows as $r) if ($r['kind'] === 'main') $main = ['id' => (int)$r['user_id'], 'name' => $r['full_name'] ?: $r['username']];
     return [$main, $subs];
 }
 /* 로그 상태 요약을 저장해 두고 고객 현황표에서 빠르게 씁니다. */
@@ -393,13 +376,12 @@ function customer_out($cid, $detail = false) {
 route('GET', 'customers', function () {
     $u = need('customer.view'); $uid = (int)$u['id']; $kw = trim((string)g('q')); $scope = g('scope', 'mine'); $p = []; $w = [];
     if ($kw !== '') { $w[] = "(c.name LIKE ? OR c.address LIKE ? OR c.site LIKE ?)"; array_push($p, "%$kw%", "%$kw%", "%$kw%"); }
-    if ($scope === 'mine') { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=?)"; $p[] = $uid; }
     // 정: 내가 정(주) 담당인 사이트 / 부: 내가 정이 아닌 모든 사이트
-    elseif ($scope === 'main') { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')"; $p[] = $uid; }
+    if ($scope === 'main' || $scope === 'mine') { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')"; $p[] = $uid; }
     elseif ($scope === 'sub') { $w[] = "c.id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')"; $p[] = $uid; }
-    elseif ($scope === 'team') { $ids = visible_user_ids($u); if ($ids !== null) { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id IN (" . implode(',', $ids) . "))"; } }
-    elseif ($scope === 'unassigned') $w[] = "c.id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE kind='main')";
-    elseif (preg_match('/^user:(\d+)$/', $scope, $m)) { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=?)"; $p[] = (int)$m[1]; }
+    elseif ($scope === 'team') { $ids = visible_user_ids($u); if ($ids !== null) { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE kind='main' AND user_id IN (" . implode(',', $ids) . "))"; } }
+    elseif ($scope === 'unassigned') $w[] = "c.id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE kind='main')"; // 정 담당이 아무도 없는 사이트 (관리자·팀장이 지정용으로 봅니다)
+    elseif (preg_match('/^user:(\d+)$/', $scope, $m)) { $w[] = "c.id IN (SELECT customer_id FROM mrs_customer_assign WHERE kind='main' AND user_id=?)"; $p[] = (int)$m[1]; }
     $rows = all("SELECT c.* FROM mrs_customer c" . ($w ? ' WHERE ' . implode(' AND ', $w) : '') . " ORDER BY c.name", $p);
     log_stat_fill();
     $as = []; foreach (all("SELECT a.customer_id, a.user_id, a.kind, u.full_name, u.username FROM mrs_customer_assign a JOIN mrs_user u ON u.id=a.user_id ORDER BY a.id") as $a) $as[$a['customer_id']][] = $a;
@@ -416,7 +398,7 @@ route('GET', 'customers', function () {
     $cc = []; foreach (all("SELECT customer_id, COUNT(*) n FROM mrs_customer_contact GROUP BY customer_id") as $r) $cc[$r['customer_id']] = (int)$r['n'];
     out(array_map(function ($c) use ($as, $eq, $st, $rp, $rc, $cc, $uid) {
         $main = null; $subs = []; $my = null;
-        foreach ($as[$c['id']] ?? [] as $a) { $x = ['id' => (int)$a['user_id'], 'name' => $a['full_name'] ?: $a['username']]; if ($a['kind'] === 'main') $main = $x; else $subs[] = $x; if ((int)$a['user_id'] === $uid) $my = $a['kind']; }
+        foreach ($as[$c['id']] ?? [] as $a) { if ($a['kind'] !== 'main') continue; $main = ['id' => (int)$a['user_id'], 'name' => $a['full_name'] ?: $a['username']]; if ((int)$a['user_id'] === $uid) $my = 'main'; }
         $s = $st[$c['id']] ?? null; $r = $rp[$c['id']] ?? null;
         return ['id' => (int)$c['id'], 'name' => $c['name'], 'address' => $c['address'] ?: '', 'site' => $c['site'] ?: '', 'linked' => (bool)$c['legacy_customer_id'], 'legacy_customer_id' => $c['legacy_customer_id'],
             'main' => $main, 'subs' => $subs, 'my_role' => $my === 'main' ? 'main' : 'sub', 'my_assigned' => $my, // 내가 정이 아니면 모두 '부'
@@ -427,13 +409,13 @@ route('GET', 'customers', function () {
 });
 route('POST', 'customers/(\d+)/assign', function ($cid) use ($in) {
     $u = need('customer.view'); customer_out($cid); $kind = $in['kind'] ?? ''; $target = (int)($in['user_id'] ?? 0) ?: (int)$u['id'];
-    if ($target !== (int)$u['id']) { if (!can_manage_user($u, $target)) fail('다른 담당자 배정은 관리자, 또는 본인 팀원에 한해 팀장만 바꿀 수 있습니다.', 403);
+    if ($target !== (int)$u['id']) { if (!can_manage_user($u, $target)) fail('다른 사람을 정 담당으로 지정하는 일은 관리자, 또는 같은 부서 팀장만 할 수 있습니다.', 403);
         $cur = (int)val("SELECT user_id FROM mrs_customer_assign WHERE customer_id=? AND kind='main'", [$cid]);
-        if ($kind === 'main' && $cur && $cur !== $target && !can_manage_user($u, $cur)) fail('다른 팀 담당자가 정으로 있는 고객입니다. 관리자에게 요청하세요.', 403); if (!one("SELECT id FROM mrs_user WHERE id=? AND is_active=1", [$target])) fail('사용자를 찾을 수 없습니다.', 404); }
+        if ($kind === 'main' && $cur && $cur !== $target && !can_manage_user($u, $cur)) fail('다른 부서 사람이 정 담당인 고객입니다. 관리자에게 요청하세요.', 403); if (!one("SELECT id FROM mrs_user WHERE id=? AND is_active=1", [$target])) fail('사용자를 찾을 수 없습니다.', 404); }
     if ($kind === 'none') q("DELETE FROM mrs_customer_assign WHERE customer_id=? AND user_id=?", [$cid, $target]);
-    elseif (!assign_kind($kind)) fail('담당 구분은 정 또는 부입니다.');
-    elseif ($target === (int)$u['id']) assign_self((int)$cid, $kind);
-    else assign_set((int)$cid, $target, $kind);
+    elseif (!assign_kind($kind)) fail('정 담당 지정 또는 해제만 할 수 있습니다. 정이 아닌 고객은 자동으로 부입니다.');
+    elseif ($target === (int)$u['id']) assign_self((int)$cid);
+    else assign_set((int)$cid, $target);
     audit('assign.' . $kind, (string)val("SELECT name FROM mrs_customer WHERE id=?", [$cid]), (string)val("SELECT username FROM mrs_user WHERE id=?", [$target]));
     out(customer_out($cid));
 });
@@ -707,7 +689,7 @@ route('DELETE', 'templates/(\d+)', function ($id) {
 /* ===== 오프라인 수집함: 담당 고객의 장비·관리 IP·명령어를 한 번에 받아 PC 에 보관 ===== */
 route('GET', 'collect/catalog', function () {
     $u = need('log.upload'); $uid = (int)$u['id'];
-    $rows = all("SELECT c.id, c.name, a.kind FROM mrs_customer c JOIN mrs_customer_assign a ON a.customer_id=c.id AND a.user_id=? ORDER BY a.kind, c.name", [$uid]);
+    $rows = all("SELECT c.id, c.name, a.kind FROM mrs_customer c JOIN mrs_customer_assign a ON a.customer_id=c.id AND a.user_id=? AND a.kind='main' ORDER BY c.name", [$uid]);
     if (g('scope') === 'all' || !$rows) { $seen = array_column($rows, 'id'); foreach (all("SELECT id, name, '' kind FROM mrs_customer ORDER BY name") as $c) if (!in_array($c['id'], $seen)) $rows[] = $c; }
     $cs = [];
     foreach (array_slice($rows, 0, 300) as $c) {
@@ -771,14 +753,14 @@ function report_scope_sql($me, $scope, $alias = '') {
     if ($scope === 'team') { $ids = visible_user_ids($me); return $ids === null ? '' : " AND $col IN (" . implode(',', $ids) . ")"; }
     return '';
 }
-/* 팀 현황: 관리자는 전체 사용자, 팀장은 본인과 팀원 */
+/* 담당자 현황: 관리자는 전체 사용자, 팀장은 본인과 같은 부서 */
 function team_status($me) {
     $ids = visible_user_ids($me); if ($ids !== null && count($ids) <= 1 && !is_leader_u($me)) return [];
     $users = all("SELECT * FROM mrs_user WHERE is_active=1" . ($ids === null ? '' : ' AND id IN (' . implode(',', $ids) . ')') . " ORDER BY role='admin' DESC, role='manager' DESC, full_name");
     $m = date('Y-m') . '%';
     return array_map(function ($u) use ($m) {
         $id = (int)$u['id'];
-        return ['id' => $id, 'name' => $u['full_name'] ?: $u['username'], 'title' => $u['title'] ?: '', 'role_label' => ROLE_LABELS[$u['role']] ?? $u['role'], 'leader_name' => user_name($u['leader_id'] ?? null),
+        return ['id' => $id, 'name' => $u['full_name'] ?: $u['username'], 'title' => $u['title'] ?: '', 'role_label' => ROLE_LABELS[$u['role']] ?? $u['role'], 'dept' => (string)val("SELECT name FROM mrs_dept WHERE id=?", [(int)($u['dept_id'] ?? 0)]),
             'main' => (int)val("SELECT COUNT(*) FROM mrs_customer_assign WHERE user_id=? AND kind='main'", [$id]), 'sub' => (int)val("SELECT COUNT(*) FROM mrs_customer WHERE id NOT IN (SELECT customer_id FROM mrs_customer_assign WHERE user_id=? AND kind='main')", [$id]),
             'in_progress' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE engineer_id=? AND status IN ('draft','review')", [$id]),
             'done_month' => (int)val("SELECT COUNT(*) FROM mrs_report WHERE engineer_id=? AND status IN ('completed','sent') AND inspection_date LIKE ?", [$id, $m]),

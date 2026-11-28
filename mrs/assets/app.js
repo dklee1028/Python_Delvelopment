@@ -212,7 +212,6 @@ function render() {
         <button class="btn ghost burger" id="burger">☰</button>
         <h2 id="page-title">MRS</h2>
         <div class="right row">
-          ${can("log.upload") ? '<a class="btn sm" id="col-btn" href="#/collect">📥 수집함</a>' : ""}
           ${S.standalone ? "" : `<button class="btn sm install" id="install-btn" ${deferredInstall ? "" : "hidden"}>⬇ 내 PC에 MRS 설치</button>`}
           <button class="btn sm ghost" id="theme-btn" title="테마">🌓</button>
           <span class="chip gray">${esc(S.me.full_name || S.me.username)} · ${esc(S.me.role_label)}</span>
@@ -306,7 +305,7 @@ async function pageDashboard(v) {
   const ST = { critical: ["위험", "var(--red)"], warning: ["요주의", "var(--amber)"], normal: ["정상", "var(--green)"], nolog: ["로그 없음", "#b8c2ce"] };
   v.innerHTML = `
   <div class="row"><b style="font-size:15px">${hi}, ${esc(S.me.full_name || S.me.username)}님</b><span class="small muted">이번 달 보고서 ${d.this_month}건</span>
-    <div class="tabs right" style="margin:0;border:0" id="dsc">${[["all", "전체"], ...(d.can_team ? [["team", "우리 팀"]] : []), ["mine", "내 담당"]].map(([k, l]) => `<button data-ds="${k}" class="${S.dashScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
+    <div class="tabs right" style="margin:0;border:0" id="dsc">${[["all", "전체"], ...(d.can_team ? [["team", "우리 부서"]] : []), ["mine", "내 담당"]].map(([k, l]) => `<button data-ds="${k}" class="${S.dashScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
     ${can("report.create") ? '<a class="btn primary sm" href="#/new">＋ 새 보고서</a>' : ""}</div>
   <div class="grid g4" style="margin-top:10px">
     ${[["고객", d.customers, "customers"], ["관리 장비", d.equipment, "eq"], ["보관 로그 · 최근 3개월", d.logs, "logs"], ["보고서 · 최근 3개월+진행 중", d.reports, "reports"]].map(([l, n, k]) =>
@@ -325,9 +324,9 @@ async function pageDashboard(v) {
   </div>
   <div class="card" style="margin-top:12px"><h3>최근 보고서</h3>${reportTable(d.recent, true)}</div>
   ${d.attention.length ? `<div class="card" style="margin-top:12px"><h3>위험 판정 보고서</h3>${reportTable(d.attention, true)}</div>` : ""}
-  ${(d.team || []).length ? `<div class="card" style="margin-top:12px"><h3>${S.me.role === "admin" || can("user.manage") ? "전체 담당자 현황" : "우리 팀 현황"}</h3><div style="overflow:auto"><table class="t"><thead><tr><th>담당자</th><th>팀</th><th style="text-align:center">담당 고객 (정/부)</th><th style="text-align:center">진행 중</th><th style="text-align:center">이번 달 완료</th><th style="text-align:center">위험 보고서</th><th style="text-align:center">위험 고객</th><th>최근 로그인</th></tr></thead><tbody>
-    ${d.team.map((t) => `<tr class="click" data-eng="${t.id}"><td><b>${esc(t.name)}</b> <span class="small muted">${esc(t.title)} · ${esc(t.role_label)}</span></td><td class="small">${t.leader_name ? esc(t.leader_name) + " 팀" : '<span class="muted">-</span>'}</td>
-      <td style="text-align:center">${t.main} / ${t.sub}</td><td style="text-align:center">${t.in_progress}</td><td style="text-align:center">${t.done_month}</td>
+  ${(d.team || []).length ? `<div class="card" style="margin-top:12px"><h3>${S.me.role === "admin" || can("user.manage") ? "전체 담당자 현황" : "우리 부서 현황"}</h3><div style="overflow:auto"><table class="t"><thead><tr><th>담당자</th><th>부서</th><th style="text-align:center">정 담당 고객</th><th style="text-align:center">진행 중</th><th style="text-align:center">이번 달 완료</th><th style="text-align:center">위험 보고서</th><th style="text-align:center">위험 고객</th><th>최근 로그인</th></tr></thead><tbody>
+    ${d.team.map((t) => `<tr class="click" data-eng="${t.id}"><td><b>${esc(t.name)}</b> <span class="small muted">${esc(t.title)} · ${esc(t.role_label)}</span></td><td class="small">${t.dept ? esc(t.dept) : '<span class="muted">-</span>'}</td>
+      <td style="text-align:center">${t.main}</td><td style="text-align:center">${t.in_progress}</td><td style="text-align:center">${t.done_month}</td>
       <td style="text-align:center">${t.critical ? `<span class="chip critical">${t.critical}</span>` : "0"}</td><td style="text-align:center">${t.crit_customers ? `<span class="chip critical">${t.crit_customers}</span>` : "0"}</td><td class="small muted">${esc(t.last_login)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
   $$("[data-by]", v).forEach((b) => b.onclick = () => { S.dashBy = b.dataset.by; route(); });
   $$("[data-eqc]", v).forEach((r) => r.onclick = () => { location.hash = "#/logs/" + r.dataset.eqc; });
@@ -775,7 +774,7 @@ async function pageReports(v) {
   v.innerHTML = `<div class="card"><div class="row"><input type="search" id="q" placeholder="제목·번호·고객 검색" style="max-width:280px">
     <select id="fs" style="max-width:150px"><option value="">전체 상태</option>${Object.entries(C.status).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
     <select id="ft" style="max-width:170px"><option value="">전체 종류</option>${Object.entries(C.report_types).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
-    <select id="fsc" style="max-width:140px"><option value="all">전체 보고서</option>${["admin", "manager"].includes(S.me.role) || can("user.manage") ? '<option value="team">우리 팀</option>' : ""}<option value="mine">내 보고서</option></select>
+    <select id="fsc" style="max-width:140px"><option value="all">전체 보고서</option>${["admin", "manager"].includes(S.me.role) || can("user.manage") ? '<option value="team">우리 부서</option>' : ""}<option value="mine">내 보고서</option></select>
     <select id="fen" style="max-width:160px"><option value="">모든 담당자</option>${(C.engineers || []).map((u) => `<option value="${u.id}" ${String(u.id) === String(S.repEngineer || "") ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select>
     ${periodHtml("rep")}
     ${can("report.create") ? '<a class="btn primary right" href="#/new">＋ 새 보고서</a>' : ""}</div>
@@ -803,14 +802,15 @@ const healthCell = (h) => {
 async function pageCustomers(v, id) {
   if (id) return customerDetail(v, +id);
   const users = can("customer.edit") ? await api("users").catch(() => []) : [];
-  if (!S.custScope || S.custScope === "mine") S.custScope = "main";
+  const mgrU = can("user.manage") || S.me.role === "manager"; // 정 담당 지정은 관리자·팀장
+  if (!S.custScope || S.custScope === "mine" || (S.custScope === "unassigned" && !mgrU)) S.custScope = "main";
   v.innerHTML = `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px">
-      <div class="tabs" style="margin:0;border:0" id="sc">${[["main", "정 (내가 정 담당)"], ["sub", "부 (그 외 모든 사이트)"], ...(S.me.role === "manager" ? [["team", "우리 팀 고객"]] : []), ["all", "전체"], ["unassigned", "정 담당 미지정"]].map(([k, l]) => `<button data-sc="${k}" class="${S.custScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      ${users.length ? `<select id="su" style="max-width:180px"><option value="">담당자별 보기…</option>${users.filter((u) => u.is_active).map((u) => `<option value="user:${u.id}" ${S.custScope === "user:" + u.id ? "selected" : ""}>${esc(u.full_name || u.username)} (정 ${u.assigned.main} · 부 ${u.assigned.sub})</option>`).join("")}</select>` : ""}
+      <div class="tabs" style="margin:0;border:0" id="sc">${[["main", "정 (내가 정 담당)"], ["sub", "부 (그 외 모든 사이트)"], ...(S.me.role === "manager" ? [["team", "우리 부서 고객"]] : []), ["all", "전체"], ...(mgrU ? [["unassigned", "정 담당 없음 (지정 필요)"]] : [])].map(([k, l]) => `<button data-sc="${k}" class="${S.custScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      ${users.length ? `<select id="su" style="max-width:180px"><option value="">담당자별 정 사이트…</option>${users.filter((u) => u.is_active).map((u) => `<option value="user:${u.id}" ${S.custScope === "user:" + u.id ? "selected" : ""}>${esc(u.full_name || u.username)} (정 ${u.assigned.main})</option>`).join("")}</select>` : ""}
       <input type="search" id="cq" placeholder="고객명·주소 검색" style="max-width:240px">
       <span class="right"></span>${can("customer.edit") ? '<button class="btn sm" id="legacy">🔗 PMS 고객 불러오기</button><button class="btn sm primary" id="new-c">＋ 신규 고객</button>' : ""}</div>
     <div id="sum" class="row small muted" style="margin-top:10px;gap:14px"></div>
-    <div style="overflow:auto;margin-top:8px"><table class="t cust-t"><thead><tr><th>고객</th><th>담당 (정 / 부)</th><th style="text-align:center">운영 장비</th><th>현재 상태 (최신 로그)</th><th>최근 로그</th><th>최근 보고서</th><th style="text-align:center">내 담당</th></tr></thead><tbody id="cl"></tbody></table></div></div>`;
+    <div style="overflow:auto;margin-top:8px"><table class="t cust-t"><thead><tr><th>고객</th><th>정 담당</th><th style="text-align:center">운영 장비</th><th>현재 상태 (최신 로그)</th><th>최근 로그</th><th>최근 보고서</th><th style="text-align:center">내 담당</th></tr></thead><tbody id="cl"></tbody></table></div></div>`;
   let rows = [];
   const load = async () => { $("#cl").innerHTML = '<tr><td colspan="7" class="muted">불러오는 중…</td></tr>'; rows = await api("customers?scope=" + encodeURIComponent(S.custScope)); draw(); };
   const draw = () => {
@@ -820,20 +820,20 @@ async function pageCustomers(v, id) {
     $("#sum").innerHTML = `<span>고객 <b>${list.length}</b>곳</span><span>운영 장비 <b>${eqs}</b>대</span><span>문제 있는 고객 <b style="color:var(--red)">${bad}</b>곳</span>`;
     $("#cl").innerHTML = list.map((c) => `<tr data-c="${c.id}" style="cursor:pointer">
       <td><b>${esc(c.name)}</b> ${c.linked ? '<span class="chip gray" style="font-size:10px">PMS</span>' : ""}<div class="small muted">${esc(c.site || c.address || "")}</div></td>
-      <td class="small">${c.main ? `<b>${esc(c.main.name)}</b>` : '<span class="muted">미지정</span>'}${c.subs.length ? `<div class="muted">부: ${c.subs.map((s) => esc(s.name)).join(", ")}</div>` : ""}</td>
+      <td class="small">${c.main ? `<b>${esc(c.main.name)}</b>` : '<span class="muted">없음</span>'}</td>
       <td style="text-align:center"><b>${c.equipment_count}</b>대${c.disposed_count ? `<div class="small muted">파기 ${c.disposed_count}</div>` : ""}</td>
       <td>${c.equipment_count ? healthCell(c.health) : '<span class="small muted">장비 없음</span>'}</td>
       <td class="small">${c.health?.last_log ? esc(c.health.last_log) : "-"}</td>
       <td class="small">${c.last_report ? `${esc(c.last_report.date || "")} ${esc(c.last_report.type)}<div>${chip(c.last_report.status, (S.catalog?.status || {})[c.last_report.status])}</div>` : '<span class="muted">-</span>'}</td>
       <td style="text-align:center;white-space:nowrap">${c.my_role ? roleChip(c.my_role) : ""}
-        <select class="small" data-as="${c.id}" style="width:auto"><option value="">${c.my_role === "main" ? "변경" : "정 담당하기"}</option><option value="main">정</option><option value="sub">부</option>${c.my_role ? '<option value="none">해제</option>' : ""}</select></td></tr>`).join("")
-      || `<tr><td colspan="7" class="empty">${S.custScope === "mine" ? "내가 맡은 고객이 없습니다. [전체] 탭이나 [PMS 고객 불러오기]에서 고객을 정(주 담당) 또는 부(보조)로 선택하세요." : "고객이 없습니다."}</td></tr>`;
-    $$("[data-c]", v).forEach((r) => r.onclick = (e) => { if (!e.target.closest("select")) location.hash = "#/customers/" + r.dataset.c; });
-    $$("[data-as]", v).forEach((sel) => sel.onchange = async () => {
-      if (!sel.value) return;
-      try { const r = await api(`customers/${sel.dataset.as}/assign`, { method: "POST", body: { kind: sel.value } }); toast(sel.value === "none" ? "담당을 해제했습니다." : sel.value === "main" && r.my_role === "sub" ? `이미 ${r.main ? r.main.name : "다른"} 님이 정 담당이라 부 담당으로 지정했습니다. (정 변경은 관리자·팀장)` : `${sel.value === "main" ? "정" : "부"} 담당으로 지정했습니다.`, "ok"); load(); }
-      catch (e) { toast(e.message, "err"); sel.value = ""; }
-    });
+        ${c.my_role === "main" ? `<button class="btn sm" data-as="${c.id}" data-k="none">정 해제</button>` : !c.main || mgrU ? `<button class="btn sm" data-as="${c.id}" data-k="main">${c.main ? "정 가져오기" : "정 담당하기"}</button>` : ""}</td></tr>`).join("")
+      || `<tr><td colspan="7" class="empty">${S.custScope === "main" ? "내가 정 담당인 고객이 없습니다. [부] 또는 [전체] 탭에서 고객을 골라 [정 담당하기]를 누르세요." : "고객이 없습니다."}</td></tr>`;
+    $$("[data-c]", v).forEach((r) => r.onclick = (e) => { if (!e.target.closest("select,button")) location.hash = "#/customers/" + r.dataset.c; });
+    $$("[data-as]", v).forEach((b) => b.onclick = (e) => busy(b, async () => {
+      e.stopPropagation();
+      try { await api(`customers/${b.dataset.as}/assign`, { method: "POST", body: { kind: b.dataset.k } }); toast(b.dataset.k === "none" ? "정 담당을 해제했습니다. 이 고객은 이제 부 사이트입니다." : "정 담당으로 지정했습니다.", "ok"); load(); }
+      catch (err) { toast(err.message, "err"); }
+    }));
   };
   $$("[data-sc]", v).forEach((b) => b.onclick = () => { S.custScope = b.dataset.sc; $$("[data-sc]", v).forEach((x) => x.classList.toggle("on", x === b)); if ($("#su")) $("#su").value = ""; load(); });
   $("#su") && ($("#su").onchange = () => { if (!$("#su").value) return; S.custScope = $("#su").value; $$("[data-sc]", v).forEach((x) => x.classList.remove("on")); load(); });
@@ -854,12 +854,12 @@ async function customerDetail(box, id) {
       ${c.linked ? `<span class="chip gray" style="margin-top:6px">PMS 고객 연결 · ID ${esc(c.legacy_customer_id)}</span>` : '<span class="chip gray" style="margin-top:6px">MRS 단독 등록</span>'}</div>
       ${ed ? '<button class="btn" id="ed-c">수정</button><button class="btn danger" id="rm-c">삭제</button>' : ""}</div>${c.memo ? `<p class="small muted">${esc(c.memo)}</p>` : ""}
       <div class="row" style="margin-top:12px;gap:10px;flex-wrap:wrap"><span class="small"><b>정 담당</b> ${c.main ? esc(c.main.name) : '<span class="muted">미지정</span>'}</span>
-        <span class="small"><b>부 담당</b> ${c.subs.length ? c.subs.map((s) => esc(s.name) + (mgr ? ` <a href="#" data-unsub="${s.id}" title="해제">✕</a>` : "")).join(", ") : '<span class="muted">없음</span>'}</span>
+        <span class="small muted">정 담당이 아닌 사람에게는 모두 '부' 사이트입니다.</span>
         <span class="right"></span>
-        <select id="my-as" style="width:auto"><option value="">내 담당 지정…</option><option value="main">정으로</option><option value="sub">부로</option>${c.my_role ? '<option value="none">해제</option>' : ""}</select>
-        ${mgr && users.length ? `<select id="ot-u" style="width:auto"><option value="">다른 담당자 지정…</option>${users.filter((u) => u.is_active).map((u) => `<option value="${u.id}">${esc(u.full_name || u.username)}</option>`).join("")}</select>
-          <select id="ot-k" style="width:auto"><option value="main">정</option><option value="sub">부</option></select><button class="btn sm" id="ot-go">지정</button>` : ""}</div>
-      <p class="small muted" style="margin:8px 0 0">담당을 바꾸거나 다른 사람에게 옮겨도 이 고객의 장비·로그·보고서는 그대로 유지됩니다.</p></div>
+        ${c.my_role === "main" ? '<button class="btn sm" id="my-as" data-k="none">정 해제</button>' : !c.main || mgr ? `<button class="btn sm" id="my-as" data-k="main">${c.main ? "내가 정 가져오기" : "내가 정 담당하기"}</button>` : ""}
+        ${mgr && users.length ? `<select id="ot-u" style="width:auto"><option value="">다른 사람을 정 담당으로…</option>${users.filter((u) => u.is_active).map((u) => `<option value="${u.id}">${esc(u.full_name || u.username)}${u.dept_name ? " · " + esc(u.dept_name) : ""}</option>`).join("")}</select>
+          <button class="btn sm" id="ot-go">지정</button>` : ""}</div>
+      <p class="small muted" style="margin:8px 0 0">정 담당을 바꾸거나 다른 사람에게 옮겨도 이 고객의 장비·로그·보고서는 그대로 유지됩니다.</p></div>
     <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">전산 담당자</h3>${ed ? '<button class="btn sm right" id="add-ct">＋ 담당자 추가</button>' : ""}</div>
       <table class="t" style="margin-top:12px"><thead><tr><th>이름</th><th>부서/직책</th><th>이메일</th><th>연락처</th><th>보고서 수신</th><th></th></tr></thead><tbody>
       ${c.contacts.map((x) => `<tr><td><b>${esc(x.name)}</b> ${x.is_primary ? '<span class="chip">대표</span>' : ""}</td><td>${esc(x.department)} ${esc(x.position)}</td><td>${esc(x.email)}</td><td>${esc(x.phone)}</td><td>${x.receive_reports ? "✅" : "—"}</td>
@@ -872,10 +872,9 @@ async function customerDetail(box, id) {
         <td style="white-space:nowrap"><a class="btn sm" href="#/logs/${c.id}">로그</a>${eqEd ? (e.disposed ? `<button class="btn sm" data-rst="${e.id}">복원</button><button class="btn sm danger" data-req="${e.id}">완전 삭제</button>`
           : `<button class="btn sm" data-eeq="${e.id}">수정</button><button class="btn sm danger" data-dsp="${e.id}">파기</button>`) : ""}</td></tr>`).join("") || '<tr><td colspan="7" class="muted">등록된 장비가 없습니다.</td></tr>'}</tbody></table></div>`;
   const refresh = () => route();
-  const assign = async (body) => { try { const r = await api(`customers/${id}/assign`, { method: "POST", body }); toast(!body.user_id && body.kind === "main" && r.my_role === "sub" ? `이미 ${r.main ? r.main.name : "다른"} 님이 정 담당이라 부 담당으로 지정했습니다. (정 변경은 관리자·팀장)` : "담당을 바꿨습니다.", "ok"); refresh(); } catch (e) { toast(e.message, "err"); } };
-  $("#my-as").onchange = () => $("#my-as").value && assign({ kind: $("#my-as").value });
-  $("#ot-go") && ($("#ot-go").onclick = () => $("#ot-u").value ? assign({ user_id: +$("#ot-u").value, kind: $("#ot-k").value }) : toast("담당자를 고르세요.", "err"));
-  $$("[data-unsub]", box).forEach((a) => a.onclick = (e) => { e.preventDefault(); assign({ user_id: +a.dataset.unsub, kind: "none" }); });
+  const assign = async (body) => { try { const r = await api(`customers/${id}/assign`, { method: "POST", body }); toast(body.kind === "none" ? "정 담당을 해제했습니다." : `${r.main ? r.main.name : ""} 님을 정 담당으로 지정했습니다.`, "ok"); refresh(); } catch (e) { toast(e.message, "err"); } };
+  $("#my-as") && ($("#my-as").onclick = () => assign({ kind: $("#my-as").dataset.k }));
+  $("#ot-go") && ($("#ot-go").onclick = () => $("#ot-u").value ? assign({ user_id: +$("#ot-u").value, kind: "main" }) : toast("담당자를 고르세요.", "err"));
   $("#shw-d").onchange = () => { S.showDisposed = $("#shw-d").checked; refresh(); };
   $("#ed-c") && ($("#ed-c").onclick = () => customerForm(c, refresh));
   $("#rm-c") && ($("#rm-c").onclick = async () => { if (await confirmBox(`${c.name} 고객을 삭제할까요? (담당자·장비·로그 포함)`)) api("customers/" + id, { method: "DELETE" }).then(() => { toast("삭제되었습니다.", "ok"); location.hash = "#/customers"; }).catch((e) => toast(e.message, "err")); });
@@ -913,9 +912,9 @@ const contactForm = (cid, ct, done) => formModal(ct ? "담당자 수정" : "전�
 const equipmentForm = (cid, e, done) => formModal(e ? "장비 수정" : "장비 등록", [["name", "시스템명/호스트명", "text", true], ["vendor", "제조사"], ["model", "모델 (로그에서 자동 인식)"], ["serial", "System S/N"], ["os_version", "OS 버전"], ["ha_type", "HA 구성 (예: HA Pair)"], ["disk_info", "디스크 (예: SAS 24EA)"], ["location", "위치"], ["contract_type", "계약 유형"], ["mgmt_host", "관리 IP (첫 로그에서 자동 수집 · 직접 수정 가능)"], ["exclude_vols", "보고서에서 뺄 SVM·볼륨 (쉼표로 구분, * 사용 가능 · 예: svm01, svm02:vol_tmp*) — SVM 루트·vol0 는 자동 제외", "text", false, true], ["memo", "메모", "textarea", false, true]], e || { vendor: "NetApp" },
   async (d) => { await api(e ? "equipment/" + e.id : `customers/${cid}/equipment`, { method: e ? "PUT" : "POST", body: { ...d, is_active: true } }); done(); });
 
-// PMS 고객 전체 목록 (개수 제한 없음). 여기서 바로 정/부 담당으로 연결합니다.
+// PMS 고객 전체 목록 (개수 제한 없음). 여기서 바로 연결하고, 원하면 정 담당까지 맡습니다.
 async function legacyDialog(onDone) {
-  const m = modal(`<h3>🔗 PMS 고객 불러오기</h3><p class="small muted">PMS 고객 테이블을 읽기 전용으로 불러옵니다. 맡을 고객을 <b>정</b>(주 담당) 또는 <b>부</b>(보조)로 연결하세요. PMS 쪽 데이터는 바꾸지 않습니다.</p>
+  const m = modal(`<h3>🔗 PMS 고객 불러오기</h3><p class="small muted">PMS 고객 테이블을 읽기 전용으로 불러옵니다. <b>정 담당으로 연결</b>을 누르면 내가 정 담당이 되고, <b>연결만</b>을 누르면 MRS에 등록만 합니다(나에게는 부 사이트). PMS 쪽 데이터는 바꾸지 않습니다.</p>
     <div class="row"><input type="search" id="lq" placeholder="고객명·코드·주소로 거르기"><label class="small row" style="gap:6px;white-space:nowrap"><input type="checkbox" id="lonly"> 미연결만</label><button class="btn" id="lsync" title="연결된 고객명·주소를 PMS 기준으로 갱신">동기화</button></div>
     <div class="small muted" id="lcnt" style="margin-top:8px"></div><div id="lr" style="margin-top:8px;max-height:56vh;overflow:auto"></div>
     <div class="actions"><button class="btn" data-close>닫기</button></div>`, "wide");
@@ -928,11 +927,11 @@ async function legacyDialog(onDone) {
     $("#lcnt", m).textContent = `PMS 고객 ${r.total}곳 중 ${list.length}곳 표시 · 연결됨 ${r.items.filter((x) => x.mrs_customer_id).length}곳`;
     $("#lr", m).innerHTML = `<table class="t"><thead><tr><th>코드</th><th>고객명</th><th>주소</th><th>정 담당</th><th></th></tr></thead><tbody>${list.map((x) => `<tr><td class="mono small">${esc(x.code || x.id)}</td><td><b>${esc(x.name)}</b></td><td class="small">${esc(x.address)}</td>
       <td class="small">${x.mrs_customer_id ? esc(x.main_name || "미지정") : '<span class="muted">-</span>'}</td>
-      <td style="white-space:nowrap"><button class="btn sm primary" data-link="${esc(x.id)}" data-k="main">정</button><button class="btn sm" data-link="${esc(x.id)}" data-k="sub">부</button>${x.mrs_customer_id ? `<a class="btn sm ghost" href="#/customers/${x.mrs_customer_id}">열기</a>` : ""}</td></tr>`).join("")}</tbody></table>`;
+      <td style="white-space:nowrap"><button class="btn sm primary" data-link="${esc(x.id)}" data-k="main">정 담당으로 연결</button><button class="btn sm" data-link="${esc(x.id)}" data-k="">연결만</button>${x.mrs_customer_id ? `<a class="btn sm ghost" href="#/customers/${x.mrs_customer_id}">열기</a>` : ""}</td></tr>`).join("")}</tbody></table>`;
     $$("[data-link]", m).forEach((b) => b.onclick = (e) => busy(e.target, async () => {
       const c = await api(`legacy/customers/${encodeURIComponent(b.dataset.link)}/link`, { method: "POST", body: { kind: b.dataset.k } });
       const it = r.items.find((x) => x.id === b.dataset.link); it.mrs_customer_id = c.id; it.main_name = c.main ? c.main.name : ""; changed = true;
-      toast(`${c.name} → ${c.my_role === "main" ? "정" : "부"} 담당으로 연결`, "ok"); draw();
+      toast(b.dataset.k === "main" && c.my_role !== "main" ? `${c.name} 연결 완료. 이미 ${c.main ? c.main.name : "다른"} 님이 정 담당이라 나에게는 부 사이트입니다.` : `${c.name} → ${c.my_role === "main" ? "정 담당으로 " : ""}연결`, "ok"); draw();
     }));
   };
   $("#lq", m).oninput = draw; $("#lonly", m).onchange = draw;
@@ -1158,13 +1157,13 @@ async function pageUsers(v) {
   const deptOpts = (sel) => `<option value="">부서 없음</option>${depts.map((d) => `<option value="${d.id}" ${sel === d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}`;
   const deptCell = (u) => admin ? `<select class="small" data-dept="${u.id}" style="width:auto">${deptOpts(u.dept_id)}</select>` : esc(u.dept_name || "-");
   const fDept = S.userDept || "";
-  const mine = (u) => admin || (leader && u.leader_id === S.me.id);
+  const mine = (u) => admin || (leader && !!u.dept_id && u.dept_id === S.me.dept_id); // 팀장은 같은 부서 사람만
   v.innerHTML = `<div class="card"><div class="row"><h3 style="margin:0">사용자</h3>${admin ? '<button class="btn primary sm right" id="new-u">＋ 사용자 등록</button>' : ""}</div>
     <div class="row small" style="margin-top:10px;gap:6px"><span class="muted">부서</span><select id="u-df" style="width:auto"><option value="">전체</option>${depts.map((d) => `<option value="${d.id}" ${String(d.id) === String(fDept) ? "selected" : ""}>${esc(d.name)} (${d.users})</option>`).join("")}<option value="none" ${fDept === "none" ? "selected" : ""}>부서 없음</option></select></div>
     <table class="t" style="margin-top:8px"><thead><tr><th>아이디</th><th>이름</th><th>부서</th><th>역할</th><th>연락처</th><th>담당 고객</th><th>권한</th><th>최근 로그인</th><th></th></tr></thead><tbody>
     ${users.filter((u) => !fDept || (fDept === "none" ? !u.dept_id : String(u.dept_id) === String(fDept))).map((u) => `<tr style="${u.is_active ? "" : "opacity:.5"}"><td class="mono">${esc(u.username)}</td><td><b>${esc(u.full_name)}</b> <span class="small muted">${esc(u.title)}</span></td><td class="small">${deptCell(u)}</td><td>${chip(u.role === "admin" ? "critical" : u.role === "manager" ? "warning" : u.role === "engineer" ? "sent" : "gray", u.role_label)}</td>
-      <td class="small">${esc(u.email)}<br>${esc(u.phone)}</td><td class="small"><a href="#/customers" data-uc="${u.id}">정 ${u.assigned.main} · 부 ${u.assigned.sub_all ?? u.assigned.sub}</a></td><td class="small">${u.permissions.length}/${Object.keys(cat.permissions).length}</td><td class="small muted">${esc((u.last_login_at || "").replace("T", " ").slice(0, 16))}</td>
-      <td style="white-space:nowrap">${admin ? `<button class="btn sm" data-eu="${u.id}">수정</button>` : ""}${mine(u) && u.assigned.main + u.assigned.sub ? `<button class="btn sm" data-tr="${u.id}">담당 이관</button>` : ""}${admin && u.id !== S.me.id ? `<button class="btn sm danger" data-ru="${u.id}">삭제</button>` : ""}</td></tr>`).join("")}</tbody></table></div>
+      <td class="small">${esc(u.email)}<br>${esc(u.phone)}</td><td class="small"><a href="#/customers" data-uc="${u.id}">정 ${u.assigned.main}곳</a></td><td class="small">${u.permissions.length}/${Object.keys(cat.permissions).length}</td><td class="small muted">${esc((u.last_login_at || "").replace("T", " ").slice(0, 16))}</td>
+      <td style="white-space:nowrap">${admin ? `<button class="btn sm" data-eu="${u.id}">수정</button>` : ""}${mine(u) && u.assigned.main ? `<button class="btn sm" data-tr="${u.id}">담당 이관</button>` : ""}${admin && u.id !== S.me.id ? `<button class="btn sm danger" data-ru="${u.id}">삭제</button>` : ""}</td></tr>`).join("")}</tbody></table></div>
     ${admin ? `<div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">부서 설정</h3><span class="small muted">사용자를 부서에 배정하면 대시보드에서 부서별 장비 현황을 볼 수 있습니다.</span></div>
       <table class="t" style="margin-top:8px;max-width:640px"><thead><tr><th style="width:70px">순서</th><th>부서 이름</th><th style="width:80px">인원</th><th style="width:150px"></th></tr></thead><tbody>
       ${depts.map((d) => `<tr><td><input type="number" data-dso="${d.id}" value="${d.sort_no}" style="width:60px"></td><td><input type="text" data-dnm="${d.id}" value="${esc(d.name)}"></td><td class="small">${d.users}명</td>
@@ -1204,11 +1203,11 @@ async function pageUsers(v) {
   };
   $("#new-u") && ($("#new-u").onclick = () => form(null));
   $$("[data-uc]", v).forEach((a) => a.onclick = () => { S.custScope = "user:" + a.dataset.uc; });
-  // 담당 이관: 정/부 배정만 옮기고, 고객의 장비·로그·보고서는 그대로 둡니다.
+  // 담당 이관: 정 담당만 옮기고, 고객의 장비·로그·보고서는 그대로 둡니다.
   $$("[data-tr]", v).forEach((b) => b.onclick = () => {
     const u = users.find((x) => x.id === +b.dataset.tr);
-    const m = modal(`<h3>담당 고객 이관</h3><p><b>${esc(u.full_name || u.username)}</b>님이 맡은 고객 (정 ${u.assigned.main} · 부 ${u.assigned.sub})을 다른 사용자에게 옮깁니다. 고객의 장비·로그·보고서는 그대로 유지됩니다.</p>
-      <label class="f">받을 사용자</label><select id="tto">${users.filter((x) => x.is_active && x.id !== u.id && (admin || x.id === S.me.id || x.leader_id === S.me.id)).map((x) => `<option value="${x.id}">${esc(x.full_name || x.username)}</option>`).join("")}</select>
+    const m = modal(`<h3>담당 고객 이관</h3><p><b>${esc(u.full_name || u.username)}</b>님이 정 담당인 고객 ${u.assigned.main}곳을 다른 사용자에게 옮깁니다. 고객의 장비·로그·보고서는 그대로 유지됩니다.</p>
+      <label class="f">받을 사용자</label><select id="tto">${users.filter((x) => x.is_active && x.id !== u.id && (admin || mine(x))).map((x) => `<option value="${x.id}">${esc(x.full_name || x.username)}</option>`).join("")}</select>
       <label class="row small" style="margin-top:10px;gap:6px"><input type="checkbox" id="trep" checked> 진행 중(미완료) 보고서의 담당 엔지니어도 함께 변경</label>
       <div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="tgo">이관</button></div>`);
     $("#tgo", m).onclick = (e) => busy(e.target, async () => { const r = await api(`users/${u.id}/transfer`, { method: "POST", body: { to_user_id: +$("#tto", m).value, reports: $("#trep", m).checked } }); m.remove(); toast(`${r.moved}개 고객을 옮겼습니다.`, "ok"); route(); });
@@ -1374,7 +1373,7 @@ async function pageCollect(v, arg) {
       <p class="small" style="margin:6px 0 0">인터넷 없이 이 파일만으로 수집합니다. 수집이 끝나면 아래 수집함의 <b>[💾 파일로 내보내기]</b>로 .mrsbox 파일을 만들고, 인터넷 되는 PC의 MRS <b>[오프라인 수집함] › [📂 파일 가져오기]</b> → <b>[모두 올리기]</b> 하세요. 장비가 새로 생기면 MRS에서 수집기 파일을 다시 받으세요.</p></div>` : ""}
   <div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><b>${online ? "🟢 인터넷 연결됨" : "🟠 오프라인 (내부망)"}</b>
       <span class="small muted">장비 목록 기준 ${esc(cat.at || "-")}${S.offline ? " · 수집만 가능, 올리기는 인터넷 연결 후" : ""}</span>
-      ${online ? `<label class="small row right" style="gap:6px"><input type="checkbox" id="col-all" ${S.colScope === "all" ? "checked" : ""}> 담당 아닌 고객도 보기</label><button class="btn sm" id="col-sa" title="인터넷이 없는 PC에서도 열리는 수집 전용 파일(HTML 1개)">💻 오프라인 수집기 파일 받기</button>` : ""}</div>
+      ${online ? `<label class="small row right" style="gap:6px"><input type="checkbox" id="col-all" ${S.colScope === "all" ? "checked" : ""}> 부 사이트도 보기</label><button class="btn sm" id="col-sa" title="인터넷이 없는 PC에서도 열리는 수집 전용 파일(HTML 1개)">💻 오프라인 수집기 파일 받기</button>` : ""}</div>
     <p class="small muted" style="margin:8px 0 0">① 고객·장비와 <b>정기점검/특별점검</b>을 고르면 그 장비의 관리 IP와 명령어가 나옵니다. ② PuTTY 등으로 접속해 명령어를 실행하고 ③ 출력 전체를 붙여 넣거나 저장한 파일·perf_archive.7z 를 넣어 [수집함에 담기]. 수집한 내용은 <b>이 PC 브라우저에만</b> 보관되며, 인터넷이 되는 곳에서 [올리기] 하면 장비별 로그·성능 아카이브로 들어갑니다.</p></div>
   <div class="grid g2" style="margin-top:14px;align-items:start">
     <div class="card"><h3>1. 장비 · 점검 종류</h3>
