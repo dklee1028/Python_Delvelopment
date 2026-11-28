@@ -24,6 +24,8 @@ Python·composer 가 필요 없고, FTP 로 올린 뒤 설치 화면에서 DB �
 - **회사 정보**: 회사명, 주소. 보고서의 연락처·이메일은 각 보고서 **담당 엔지니어의 사용자 정보**에서 가져옵니다.
 - **메일 발송**: 발송 방식을 고릅니다.
   - **일반 SMTP**: 서버, 포트, 보안 연결(STARTTLS/SSL/없음), 계정, 비밀번호.
+    - 카페24 메일 예: 서버 `smtp.cafe24.com`, 포트 `465`, 보안 연결 `SSL/TLS`, 계정 = 카페24 메일 주소 전체(예: `name@datanex.co.kr`), 비밀번호 = 그 메일 계정 비밀번호, 보내는 사람 주소 = 같은 메일 주소.
+    - `502 unimplemented` 오류는 그 포트가 STARTTLS(또는 로그인)를 지원하지 않는다는 뜻입니다. STARTTLS 가 안 되면 MRS가 SSL(465)로 자동으로 한 번 더 시도합니다.
   - **Microsoft 365 (OAuth)**: 회사 M365에 "보안 기본값"이 켜져 SMTP 로그인이 막힐 때(`535 5.7.139`) 씁니다. 보안 정책은 그대로 두고 Graph API로 보냅니다. 아래 **4-1** 의 Azure 앱 등록이 필요합니다.
   - 어느 방식이든 [저장] 후 [테스트 메일 보내기]로 확인합니다.
 - **Claude AI**: Anthropic API 키. Claude Console(platform.claude.com) → API Keys 에서 발급하며, 사용한 만큼 과금됩니다.

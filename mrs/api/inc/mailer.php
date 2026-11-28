@@ -5,48 +5,61 @@
 class MailError extends Exception {}
 
 function smtp_send($to, $cc, $subject, $text, $html, $attachments) {
-    $host = conf('smtp_host'); $port = (int)conf('smtp_port') ?: 587; $sec = conf('smtp_security') ?: 'starttls';
-    $user = conf('smtp_user'); $pass = conf('smtp_password');
+    $host = trim((string)conf('smtp_host')); $port = (int)conf('smtp_port') ?: 587; $sec = conf('smtp_security') ?: 'starttls';
+    $user = trim((string)conf('smtp_user')); $pass = (string)conf('smtp_password');
     $from = conf('mail_from') ?: $user; $fromName = conf('mail_from_name') ?: conf('company_name');
     if (!$host) throw new MailError('SMTP 설정이 없어 메일을 보낼 수 없습니다. [시스템 설정]에서 SMTP 계정을 등록해 주세요.');
     if (!$from) throw new MailError('보내는 사람 주소가 없습니다.');
     foreach (array_merge($to, $cc) as $a) if (!filter_var($a, FILTER_VALIDATE_EMAIL)) throw new MailError("메일 주소 형식이 올바르지 않습니다: $a");
-
+    $msg = mime_build($from, $fromName, $to, $cc, $subject, $text, $html, $attachments);
+    try { smtp_session($host, $port, $sec, $user, $pass, $from, array_merge($to, $cc), $msg); }
+    catch (MailError $e) {
+        // STARTTLS 를 지원하지 않는 서버(예: '502 unimplemented')는 SSL(465)로 한 번 더 시도합니다. 비밀번호를 암호화 없이 보내지는 않습니다.
+        if ($e->getCode() !== 1 || $port === 465) throw $e;
+        try { smtp_session($host, 465, 'ssl', $user, $pass, $from, array_merge($to, $cc), $msg); }
+        catch (MailError $e2) { throw new MailError($e->getMessage() . ' SSL(465)로 다시 시도했지만 실패했습니다: ' . $e2->getMessage()); }
+    }
+}
+/* SMTP 대화 한 번. 실패하면 어느 단계에서 왜 실패했는지 알려 줍니다 (code 1 = STARTTLS 미지원) */
+function smtp_session($host, $port, $sec, $user, $pass, $from, $rcpts, $msg) {
     $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]);
     $fp = @stream_socket_client(($sec === 'ssl' ? 'ssl://' : 'tcp://') . $host . ':' . $port, $errno, $errstr, 20, STREAM_CLIENT_CONNECT, $ctx);
-    if (!$fp) throw new MailError("SMTP 서버에 연결할 수 없습니다: $errstr ($errno)");
+    if (!$fp) throw new MailError("SMTP 서버($host:$port" . ($sec === 'ssl' ? ', SSL' : '') . ")에 연결할 수 없습니다: " . ($errstr ?: '응답 없음') . " ($errno). 서버 주소·포트·보안 연결 방식을 확인하세요.");
     stream_set_timeout($fp, 30);
     $read = function () use ($fp) { $out = ''; while (($l = fgets($fp, 1024)) !== false) { $out .= $l; if (strlen($l) < 4 || $l[3] === ' ') break; } return $out; };
-    $cmd = function ($c, $expect) use ($fp, $read) {
+    $cmd = function ($c, $expect, $step) use ($fp, $read) {
         if ($c !== null) fwrite($fp, $c . "\r\n");
         $r = $read(); $code = (int)substr($r, 0, 3);
-        if (!in_array($code, (array)$expect, true)) throw new MailError('SMTP 오류: ' . trim($r ?: '응답 없음'));
+        if (!in_array($code, (array)$expect, true)) throw new MailError("SMTP 오류 ($step 단계): " . trim($r ?: '응답 없음'));
         return $r;
     };
+    $has = function ($ehlo, $word) { return (bool)preg_match('/^250[ -]' . $word . '\b/mi', $ehlo); };
     try {
-        $cmd(null, 220);
+        $cmd(null, 220, '접속');
         $me = gethostname() ?: 'localhost';
-        $ehlo = $cmd("EHLO $me", 250);
+        $ehlo = $cmd("EHLO $me", 250, 'EHLO');
         if ($sec === 'starttls') {
-            $cmd('STARTTLS', 220);
-            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new MailError('STARTTLS 협상에 실패했습니다.');
-            $ehlo = $cmd("EHLO $me", 250);
+            if (!$has($ehlo, 'STARTTLS')) throw new MailError("이 서버($host:$port)는 STARTTLS 를 지원하지 않습니다. [보안 연결]을 'SSL/TLS', 포트를 465 로 바꿔 보세요.", 1);
+            $r = fwrite($fp, "STARTTLS\r\n") ? $read() : '';
+            if ((int)substr($r, 0, 3) !== 220) throw new MailError("이 서버($host:$port)는 STARTTLS 를 받지 않습니다 (" . trim($r ?: '응답 없음') . "). [보안 연결]을 'SSL/TLS', 포트를 465 로 바꿔 보세요.", 1);
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new MailError('STARTTLS 암호화 연결에 실패했습니다. 서버 인증서를 확인하거나 SSL(465)을 써 보세요.');
+            $ehlo = $cmd("EHLO $me", 250, 'EHLO');
         }
         if ($user !== '') {
-            if (stripos($ehlo, 'AUTH') !== false && stripos($ehlo, 'PLAIN') !== false) $cmd('AUTH PLAIN ' . base64_encode("\0$user\0$pass"), 235);
-            else { $cmd('AUTH LOGIN', 334); $cmd(base64_encode($user), 334); $cmd(base64_encode($pass), 235); }
+            if (!$has($ehlo, 'AUTH')) throw new MailError("이 서버($host:$port)는 로그인(AUTH)을 받지 않습니다. 보내는 메일 서버의 로그인용 포트(보통 465 SSL 또는 587)를 쓰세요.");
+            try {
+                if (preg_match('/^250[ -]AUTH\b[^\r\n]*\bPLAIN\b/mi', $ehlo)) $cmd('AUTH PLAIN ' . base64_encode("\0$user\0$pass"), 235, '로그인');
+                else { $cmd('AUTH LOGIN', 334, '로그인'); $cmd(base64_encode($user), 334, '로그인'); $cmd(base64_encode($pass), 235, '로그인'); }
+            } catch (MailError $e) { throw new MailError($e->getMessage() . ' — SMTP 계정(전체 메일 주소)과 비밀번호를 확인하세요.'); }
         }
-        $cmd("MAIL FROM:<$from>", 250);
-        foreach (array_merge($to, $cc) as $a) $cmd("RCPT TO:<$a>", [250, 251]);
-        $cmd('DATA', 354);
-        $msg = mime_build($from, $fromName, $to, $cc, $subject, $text, $html, $attachments);
-        $msg = preg_replace('/^\./m', '..', $msg); // dot-stuffing
-        fwrite($fp, $msg . "\r\n.\r\n");
-        $cmd(null, 250);
+        $cmd("MAIL FROM:<$from>", 250, '보내는 사람');
+        foreach ($rcpts as $a) $cmd("RCPT TO:<$a>", [250, 251], '받는 사람');
+        $cmd('DATA', 354, '본문');
+        fwrite($fp, preg_replace('/^\./m', '..', $msg) . "\r\n.\r\n"); // dot-stuffing
+        $cmd(null, 250, '본문');
         @fwrite($fp, "QUIT\r\n");
     } finally { @fclose($fp); }
 }
-
 function enc_hdr($s) { return preg_match('/[^\x20-\x7e]/', $s) ? '=?UTF-8?B?' . base64_encode($s) . '?=' : $s; }
 function mime_build($from, $fromName, $to, $cc, $subject, $text, $html, $attachments) {
     $b1 = 'mrs_m_' . bin2hex(random_bytes(8)); $b2 = 'mrs_a_' . bin2hex(random_bytes(8));
