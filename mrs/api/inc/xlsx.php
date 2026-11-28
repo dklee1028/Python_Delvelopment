@@ -202,6 +202,11 @@ function x_system($x, $ctx, $e) {
     $r = x_table($x, $ws, $r, $rows, ['status_col' => 6]);
     if (count($rows) > 1) $ws->cf[] = ['E' . ($v0 + 1) . ':E' . ($v0 + count($rows) - 1), 'databar'];
     if (!empty($e['parsed']['volumes_hidden'])) { $ws->set($r, 1, "※ 루트·제외 볼륨 {$e['parsed']['volumes_hidden']}개는 표에서 뺐습니다.", $x->st->get(['size' => 8, 'color' => C_GREY])); $r++; }
+    if (!empty($e['util'])) {
+        [$n, $i] = util_tables($e['util'], 50);
+        if ($n) { $r = x_section($x, $ws, $r, '시스템 사용률 – 노드별 CPU · 디스크 · 네트워크'); $r = x_table($x, $ws, $r, $n, ['status_col' => 4]); }
+        if ($i) { $r = x_section($x, $ws, $r, '시스템 사용률 – 인터페이스별 네트워크'); $r = x_table($x, $ws, $r, $i, ['status_col' => 6]); }
+    }
     $r = x_section($x, $ws, $r, '로그 분석 진단 (Diagnostic Findings)');
     $rows = [['등급', '구분', '진단', '상세', '권고 조치']];
     foreach ($e['analysis']['findings'] as $f) $rows[] = [STATUS_TEXT[$f['severity']], $f['category'], $f['title'], $f['detail'], $f['recommendation']];

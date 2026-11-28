@@ -2,7 +2,7 @@
 /* MRS - API 진입점.  호출: api/index.php?p=리소스/경로&쿼리...
    일부 웹호스팅은 PUT/DELETE/PATCH 를 막으므로 화면은 항상 POST + X-HTTP-Method-Override 헤더로 보냅니다. */
 require __DIR__ . '/lib.php';
-foreach (['catalog', 'parser', 'analyzer', 'ai', 'mailer', 'pptx_kit', 'pptx_report', 'xlsx', 'custom_template', 'report_service', 'perf', 'cdot_checks'] as $f) require __DIR__ . "/inc/$f.php";
+foreach (['catalog', 'parser', 'analyzer', 'ai', 'mailer', 'pptx_kit', 'pptx_report', 'xlsx', 'custom_template', 'report_service', 'perf', 'cdot_checks', 'util'] as $f) require __DIR__ . "/inc/$f.php";
 @ini_set('display_errors', '0');
 @ini_set('log_errors', '1');
 @set_time_limit(300);
@@ -258,7 +258,18 @@ function eq_out($e) {
     $pa = one("SELECT id, status, created_at FROM mrs_perf_archive WHERE equipment_id=? AND status<>'uploading' ORDER BY id DESC LIMIT 1", [$e['id']]);
     $d['last_perf'] = $pa ? ['id' => (int)$pa['id'], 'at' => substr($pa['created_at'], 0, 10), 'status' => $pa['status']] : null;
     $d['last_log'] = $st ? ['at' => substr($st['collected_at'], 0, 10), 'status' => $st['status'] ?: 'normal', 'crit' => (int)$st['n_crit'], 'warn' => (int)$st['n_warn']] : null;
+    $d['mgmt_host'] = $e['mgmt_host'] ?? ''; $d['access'] = jd($e['access_info'] ?? '', null) ?: null;
     return $d;
+}
+/* 로그에서 찾은 관리 IP 를 장비에 저장 (관리 IP 칸이 비어 있으면 클러스터 관리 IP 로 채움) */
+function eq_access_fill($eid, $acc) {
+    if (!$eid || !$acc) return;
+    $e = one("SELECT mgmt_host, access_info FROM mrs_equipment WHERE id=?", [$eid]); if (!$e) return;
+    $old = jd($e['access_info'] ?? '', []) ?: [];
+    $new = ['cluster_mgmt' => ($acc['cluster_mgmt'] ?? '') ?: ($old['cluster_mgmt'] ?? ''), 'node_mgmt' => ($acc['node_mgmt'] ?? []) + ($old['node_mgmt'] ?? []), 'sp' => ($acc['sp'] ?? []) + ($old['sp'] ?? []), 'at' => now()];
+    $d = ['access_info' => je($new)];
+    if (trim((string)$e['mgmt_host']) === '') $d['mgmt_host'] = $new['cluster_mgmt'] ?: (string)(array_values($new['node_mgmt'])[0] ?? '');
+    upd('mrs_equipment', $d, $eid);
 }
 /* ----- 담당 배정 (정/부) ----- */
 function assign_kind($k) { return in_array($k, ['main', 'sub'], true) ? $k : ''; }
@@ -391,6 +402,7 @@ route('DELETE', 'contacts/(\d+)', function ($id) {
 });
 function eq_data($in) {
     $d = ['name' => s($in['name'] ?? '', 100)]; foreach (['vendor' => 50, 'model' => 100, 'serial' => 200, 'os_version' => 100, 'ha_type' => 50, 'disk_info' => 200, 'location' => 200, 'contract_type' => 100, 'memo' => 5000, 'exclude_vols' => 500] as $k => $n) $d[$k] = s($in[$k] ?? '', $n);
+    if (array_key_exists('mgmt_host', $in)) $d['mgmt_host'] = s($in['mgmt_host'], 200);
     $d['is_active'] = b($in['is_active'] ?? true) ? 1 : 0; if ($d['name'] === '') fail('시스템명을 입력하세요.'); return $d;
 }
 route('POST', 'customers/(\d+)/equipment', function ($cid) use ($in) { need('equipment.edit'); customer_out($cid); $d = eq_data($in); $id = ins('mrs_equipment', $d + ['customer_id' => (int)$cid, 'created_at' => now(), 'updated_at' => now()]); audit('equipment.create', $d['name']); out(eq_out(one("SELECT * FROM mrs_equipment WHERE id=?", [$id]))); });
@@ -461,6 +473,7 @@ route('POST', 'customers/(\d+)/logs', function ($cid) {
         $ids[] = ins('mrs_log_file', ['customer_id' => (int)$cid, 'equipment_id' => $target, 'collected_at' => $when, 'original_name' => mb_substr($f['name'], 0, 300), 'stored_path' => "$rel/$name",
             'size_bytes' => strlen($data), 'sha256' => hash('sha256', $data), 'parsed' => je($parsed), 'note' => $note, 'uploaded_by' => me()['id'], 'created_at' => now(), 'updated_at' => now()]);
         log_stat_fill('id=?', [end($ids)]);
+        if (!empty($parsed['access'])) eq_access_fill($target, $parsed['access']);
     }
     audit('log.upload', $cust['name'], implode(', ', array_column($files, 'name')));
     $names = eq_names($cid);
@@ -591,6 +604,20 @@ route('DELETE', 'templates/(\d+)', function ($id) {
     @unlink(data_dir() . '/' . $t['stored_path']); q("UPDATE mrs_report SET template_id=NULL WHERE template_id=?", [$id]); q("DELETE FROM mrs_report_template WHERE id=?", [$id]); audit('template.delete', $t['name']); out(['ok' => true]);
 });
 
+/* ===== 오프라인 수집함: 담당 고객의 장비·관리 IP·명령어를 한 번에 받아 PC 에 보관 ===== */
+route('GET', 'collect/catalog', function () {
+    $u = need('log.upload'); $uid = (int)$u['id'];
+    $rows = all("SELECT c.id, c.name, a.kind FROM mrs_customer c JOIN mrs_customer_assign a ON a.customer_id=c.id AND a.user_id=? ORDER BY a.kind, c.name", [$uid]);
+    if (g('scope') === 'all' || !$rows) { $seen = array_column($rows, 'id'); foreach (all("SELECT id, name, '' kind FROM mrs_customer ORDER BY name") as $c) if (!in_array($c['id'], $seen)) $rows[] = $c; }
+    $cs = [];
+    foreach (array_slice($rows, 0, 300) as $c) {
+        $eqs = array_map(function ($e) { $d = eq_out($e); return array_intersect_key($d, array_flip(['id', 'name', 'vendor', 'model', 'serial', 'os_version', 'mgmt_host', 'access', 'last_log'])); },
+            all("SELECT * FROM mrs_equipment WHERE customer_id=? AND disposed_at IS NULL AND is_active=1 ORDER BY name", [$c['id']]));
+        $cs[] = ['id' => (int)$c['id'], 'name' => $c['name'], 'my_role' => $c['kind'] ?: '', 'equipment' => $eqs];
+    }
+    out(['at' => now(), 'customers' => $cs, 'cmd_scripts' => ['regular' => cdot_command_script('regular'), 'special' => cdot_command_script('special')]]);
+});
+
 /* ===== 보고서 ===== */
 route('GET', 'catalog', function () {
     need('report.view');
@@ -620,7 +647,7 @@ function report_detail($rid) {
             'ha' => $p['ha'] ?? null, 'ports_down' => $p['ports_down'] ?? [], 'failed_disks' => $p['disks']['failed'] ?? [], 'spare' => $p['disks']['spare'] ?? 0,
             'visual_hints' => (object)($a['analysis']['visual_hints'] ?? []), 'os_mode' => $p['os_mode'] ?? '',
             'cmd_summary' => array_count_values(array_map(function ($c) { return $c['status']; }, cmd_check_rows($p, $r['report_type']))),
-            'volumes_hidden' => $p['volumes_hidden'] ?? 0, 'auto_logs' => $a['auto_logs'] ?? false, 'perf' => isset($a['perf']) ? ['id' => $a['perf']['id'], 'file' => $a['perf']['file'], 'uploaded' => $a['perf']['uploaded'], 'status' => $a['perf']['status'], 'findings' => count($a['perf']['findings'])] : null];
+            'volumes_hidden' => $p['volumes_hidden'] ?? 0, 'auto_logs' => $a['auto_logs'] ?? false, 'util' => $p['util'] ?? null, 'perf' => isset($a['perf']) ? ['id' => $a['perf']['id'], 'file' => $a['perf']['file'], 'uploaded' => $a['perf']['uploaded'], 'status' => $a['perf']['status'], 'findings' => count($a['perf']['findings'])] : null];
     }
     $eng = $r['engineer_id'] ? one("SELECT full_name, username FROM mrs_user WHERE id=?", [$r['engineer_id']]) : null;
     $d += ['template_id' => $r['template_id'] === null ? null : (int)$r['template_id'], 'service_codes' => jd($r['service_codes'], []), 'plan' => (object)jd($r['plan'], []),

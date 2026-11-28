@@ -29,11 +29,12 @@ function run_analysis($r) {
         }
         $parsed = merge_parsed(array_map(function ($lg) { return jd($lg['parsed'], []); }, $mine));
         $parsed = filter_volumes($parsed, (string)($eq['exclude_vols'] ?? ''));
-        $perf = (int)($r['include_perf'] ?? 1) ? perf_for_equipment($eq['id'], $r['inspection_date']) : null;
+        // 성능 아카이브 세부 분석은 특별점검 보고서에만 넣습니다
+        $perf = (int)($r['include_perf'] ?? 1) && $r['report_type'] === 'special' ? perf_for_equipment($eq['id'], $r['inspection_date']) : null;
         $sys = (array)$parsed['system']; $fill = [];
         foreach (['model' => 'model', 'serial' => 'serial', 'os_version' => 'os_version'] as $col => $k) if (!$eq[$col] && !empty($sys[$k])) { $fill[$col] = mb_substr($sys[$k], 0, 100); $eq[$col] = $sys[$k]; }
         if ($fill) upd('mrs_equipment', $fill + ['updated_at' => now()], $eq['id']);
-        $extra = array_merge($perf['findings'] ?? [], ($parsed['os_mode'] ?? '') === 'cdot' ? cdot_findings((array)($parsed['cdot'] ?? []), $r['report_type']) : []);
+        $extra = array_merge($perf['findings'] ?? [], util_findings($parsed['util'] ?? null), ($parsed['os_mode'] ?? '') === 'cdot' ? cdot_findings((array)($parsed['cdot'] ?? []), $r['report_type']) : []);
         $a = analyze(['model' => $eq['model'], 'os_version' => $eq['os_version']], $parsed, $extra);
         $a['visual_hints'] = visual_hints($parsed, $a, $perf);
         $out[(string)$eq['id']] = ['parsed' => $parsed, 'analysis' => $a, 'log_ids' => array_map(function ($l) { return (int)$l['id']; }, $mine), 'auto_logs' => $auto, 'perf' => $perf];
@@ -90,7 +91,7 @@ function build_context($r) {
         $eqs[] = ['id' => (int)$e['id'], 'seq' => $seq, 'label' => "System $seq (" . ($e['model'] ?: $e['name']) . ')', 'name' => $e['name'], 'vendor' => $e['vendor'] ?: '',
             'model' => $e['model'] ?: '-', 'serial' => $e['serial'] ?: '-', 'os_version' => $e['os_version'] ?: '-', 'disk_info' => $e['disk_info'] ?: '-',
             'ha_type' => $e['ha_type'] ?: '', 'location' => $e['location'] ?: '', 'parsed' => $data['parsed'], 'analysis' => $data['analysis'],
-            'visual' => $vis[(string)$e['id']] ?? [], 'perf' => $data['perf'] ?? null, 'cmd_checks' => cmd_check_rows($data['parsed'], $r['report_type']), 'checks' => auto_checks($data['parsed'], $data['analysis'], $e['os_version'] ?: '')];
+            'visual' => $vis[(string)$e['id']] ?? [], 'perf' => $data['perf'] ?? null, 'cmd_checks' => cmd_check_rows($data['parsed'], $r['report_type']), 'util' => $data['parsed']['util'] ?? null, 'checks' => auto_checks($data['parsed'], $data['analysis'], $e['os_version'] ?: '')];
     }
     $st = $r['overall_status'] ?: 'normal'; $plan = jd($r['plan'], []);
     if (!empty($plan['steps'])) $plan['steps'] = number_steps($plan['steps']);

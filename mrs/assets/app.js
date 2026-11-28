@@ -95,6 +95,7 @@ const I = {
   server: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
   tpl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>',
+  box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>',
 };
 
@@ -105,6 +106,7 @@ const ROUTES = [
   ["reports", "보고서 관리", I.doc, "report.view"],
   ["customers", "고객 · 전산담당자", I.users, "customer.view"],
   ["logs", "장비 · 로그 보관함", I.server, "customer.view"],
+  ["collect", "오프라인 수집함", I.box, "log.upload"],
   ["templates", "고객 양식", I.tpl, "report.view"],
   ["users", "사용자 · 권한", I.shield, "report.view"],
   ["settings", "시스템 설정", I.gear, "settings.manage"],
@@ -116,7 +118,12 @@ addEventListener("hashchange", () => route());
 async function boot() {
   try { document.documentElement.dataset.theme = localStorage.getItem("mrs-theme") || "light"; } catch (_) {}
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-  try { S.me = await api("auth/me"); } catch (_) { S.me = null; }
+  try { S.me = await api("auth/me"); OFF.saveMe(); }
+  catch (e) {
+    S.me = null;
+    // 인터넷이 안 되는 곳(내부망): 마지막으로 로그인했던 사용자로 '오프라인 수집함'만 엽니다
+    if (e instanceof TypeError && OFF.me()) { S.me = OFF.me(); S.offline = true; }
+  }
   render();
 }
 
@@ -126,7 +133,7 @@ function render() {
   <div class="shell">
     <aside class="side" id="side">
       <div class="brand"><img src="assets/icons/mrs-192.png" alt=""><div><b>MRS</b><span>Management Report System</span></div></div>
-      <nav class="nav">${ROUTES.filter((r) => can(r[3])).map((r) => `<a href="#/${r[0]}" data-r="${r[0]}">${r[2]}<span>${r[1]}</span></a>`).join("")}</nav>
+      <nav class="nav">${ROUTES.filter((r) => can(r[3]) && (!S.offline || r[0] === "collect")).map((r) => `<a href="#/${r[0]}" data-r="${r[0]}">${r[2]}<span>${r[1]}</span></a>`).join("")}</nav>
       <div class="foot"><img src="assets/img/datanex_color.png" alt="DATANEX">v1.0 · ${esc(S.me.role_label)}</div>
     </aside>
     <div class="main">
@@ -134,22 +141,24 @@ function render() {
         <button class="btn ghost burger" id="burger">☰</button>
         <h2 id="page-title">MRS</h2>
         <div class="right row">
+          ${can("log.upload") ? '<a class="btn sm" id="col-btn" href="#/collect">📥 수집함</a>' : ""}
           <button class="btn sm install" id="install-btn" ${deferredInstall ? "" : "hidden"}>⬇ 내 PC에 MRS 설치</button>
           <button class="btn sm ghost" id="theme-btn" title="테마">🌓</button>
           <span class="chip gray">${esc(S.me.full_name || S.me.username)} · ${esc(S.me.role_label)}</span>
-          <button class="btn sm" id="pw-btn">비밀번호</button>
-          <button class="btn sm" id="logout-btn">로그아웃</button>
+          ${S.offline ? '<span class="chip warning">오프라인</span>' : '<button class="btn sm" id="pw-btn">비밀번호</button><button class="btn sm" id="logout-btn">로그아웃</button>'}
         </div>
       </header>
       <section class="content" id="view"></section>
     </div>
   </div>`;
   $("#burger").onclick = () => $("#side").classList.toggle("open");
-  $("#logout-btn").onclick = async () => { await api("auth/logout", { method: "POST" }); S.me = null; render(); };
+  $("#logout-btn") && ($("#logout-btn").onclick = async () => { await api("auth/logout", { method: "POST" }); S.me = null; try { localStorage.removeItem("mrs-off-me"); } catch (_) {} render(); });
   $("#theme-btn").onclick = () => { const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; document.documentElement.dataset.theme = t; try { localStorage.setItem("mrs-theme", t); } catch (_) {} };
   $("#install-btn").onclick = async () => { if (!deferredInstall) return toast("브라우저 메뉴 › '앱 설치'를 이용하세요."); deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; $("#install-btn").hidden = true; };
-  $("#pw-btn").onclick = changePassword;
+  $("#pw-btn") && ($("#pw-btn").onclick = changePassword);
+  updateCollectBadge();
   route();
+  if (S.offline) return;
   if (S.me.must_change_pw) setTimeout(() => { toast("임시 비밀번호로 로그인했습니다. 비밀번호를 바꿔 주세요."); changePassword(); }, 400);
   if (!localStorage.getItem("mrs-install-hint") && !matchMedia("(display-mode: standalone)").matches) {
     setTimeout(() => { toast("처음 오셨군요! 상단 '내 PC에 MRS 설치'로 바탕화면에 MRS 아이콘을 만들 수 있습니다."); }, 1200);
@@ -160,14 +169,14 @@ function render() {
 async function route() {
   if (!S.me) return;
   const [name, arg] = location.hash.replace(/^#\/?/, "").split("/");
-  const r = name || "dashboard";
+  const r = S.offline ? "collect" : (name || "dashboard");
   $$(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === r || (r === "report" && a.dataset.r === "reports")));
   $("#side")?.classList.remove("open");
   const view = $("#view");
   view.innerHTML = '<div class="skeleton" style="width:40%"></div><div class="skeleton"></div><div class="skeleton" style="width:70%"></div>';
   view.style.animation = "none"; void view.offsetWidth; view.style.animation = "";
-  if (!S.catalog) S.catalog = await api("catalog").catch(() => null);
-  const pages = { dashboard: pageDashboard, new: pageNew, reports: pageReports, report: pageReport, customers: pageCustomers, logs: pageLogs, templates: pageTemplates, users: pageUsers, settings: pageSettings };
+  if (!S.catalog && !S.offline) S.catalog = await api("catalog").catch(() => null);
+  const pages = { collect: pageCollect, dashboard: pageDashboard, new: pageNew, reports: pageReports, report: pageReport, customers: pageCustomers, logs: pageLogs, templates: pageTemplates, users: pageUsers, settings: pageSettings };
   const title = { report: "보고서 상세" }[r] || (ROUTES.find((x) => x[0] === r) || [, "MRS"])[1];
   $("#page-title").textContent = title;
   try { await (pages[r] || pageDashboard)(view, arg); animate(view); } catch (e) { view.innerHTML = `<div class="missing">${esc(e.message)}</div>`; }
@@ -190,7 +199,7 @@ function renderLogin() {
     try {
       await api("auth/login", { method: "POST", body: { username: String(f.get("username")).trim(), password: f.get("password") } });
       try { S.me = await api("auth/me"); } catch (_) { throw new Error("로그인은 되었지만 로그인 상태가 유지되지 않습니다. 주소를 https://www.datanex.io.kr/mrs/ 로 열었는지 확인하고, 계속되면 관리자에게 알려 주세요."); }
-      S.catalog = null; render();
+      S.catalog = null; S.offline = false; OFF.saveMe(); render();
     }
     catch (err) { toast(err.message, "err"); e.target.animate([{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(0)" }], { duration: 300 }); }
   };
@@ -311,11 +320,11 @@ async function pageNew(v) {
           <label class="small muted">로그 수집 시점</label><input type="datetime-local" id="ct" style="max-width:220px" value="${esc(W.ct)}">
           <button class="btn sm" data-cmd="${W.type === "special" ? "special" : "regular"}">📋 점검 명령어</button>${can("equipment.edit") ? '<button class="btn sm" id="add-eq">＋ 장비 추가</button>' : ""}</div>
         <p class="small muted" style="margin:10px 0 0">① 점검할 장비에 체크 → ② <b>그 장비 칸에</b> 로그 파일(.txt .log .zip .gz)과 성능 아카이브(perf_archive.7z)를 끌어다 놓으세요. 장비마다 따로 넣어야 보고서에서 장비별 볼륨·Aggr 현황이 나옵니다. 로그를 고르지 않은 장비는 그 장비의 가장 최근 로그를 자동으로 씁니다.</p>
-        <label class="row small" style="margin-top:8px;gap:6px"><input type="checkbox" id="ipf" ${W.include_perf ? "checked" : ""}> 성능 아카이브 분석 결과가 있으면 보고서에 세부 성능 분석을 넣기 (최근 120일 이내 1건)</label></div>
+        <label class="row small" style="margin-top:8px;gap:6px"><input type="checkbox" id="ipf" ${W.include_perf ? "checked" : ""}> <b>특별점검</b> 보고서에 성능 아카이브 세부 분석을 넣기 (최근 120일 이내 1건 · 정기점검 보고서에는 넣지 않음) · CPU·디스크·네트워크 사용률 표는 정기·특별 모두 로그에서 자동</label></div>
       <div class="grid g2" style="margin-top:14px">${eqs.map((e) => `<div class="card" data-box="${e.id}" style="${W.eq.includes(e.id) ? "outline:2px solid var(--blue)" : ""}">
           <label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" data-e="${e.id}" ${W.eq.includes(e.id) ? "checked" : ""}><b>🗄️ ${esc(e.name)} · ${esc(e.model || "모델 미상")}</b></label>
           <div class="small muted">S/N ${esc(e.serial || "-")} · OS ${esc(e.os_version || "-")}${e.exclude_vols ? ` · 보고서 제외: ${esc(e.exclude_vols)}` : ""}</div>
-          <div class="small" style="margin-top:6px">${perfLine(e.last_perf)}</div>
+          <div class="small" style="margin-top:6px">${perfLine(e.last_perf)}${W.type !== "special" && e.last_perf ? ' <span class="muted">(성능 아카이브는 특별점검 보고서에만 들어갑니다)</span>' : ""}</div>
           ${can("log.upload") ? `<div class="drop" data-drop="${e.id}" style="margin-top:10px;padding:14px"><b>📥 ${esc(e.name)} 로그 · perf_archive.7z</b><div class="small muted">여기로 끌어다 놓거나 클릭</div><input type="file" multiple hidden></div><div data-up="${e.id}"></div>` : ""}
           <div style="max-height:190px;overflow:auto;margin-top:8px">${logs.filter((l) => l.equipment_id === e.id).map(logRow).join("") || '<div class="small muted">이 장비의 로그가 없습니다.</div>'}</div></div>`).join("") || '<div class="card empty">장비가 없습니다. 장비를 추가하세요.</div>'}</div>
       ${unassigned.length ? `<div class="card" style="margin-top:14px"><h3>장비가 지정되지 않은 로그 ${unassigned.length}건</h3><p class="small muted">예전에 장비 없이 올린 로그는 보고서에 쓰지 않습니다. [장비 · 로그 보관함]에서 장비를 지정하면 여기 장비 칸에 나타납니다.</p>
@@ -519,6 +528,11 @@ function eqInfo(e) {
   const out = [];
   const cs = e.cmd_summary || {};
   if (e.os_mode === "cdot" && Object.keys(cs).length) out.push(`<div class="row small" style="gap:4px;flex-wrap:wrap"><span class="muted">점검 항목</span>${Object.entries(CK_LABEL).filter(([k]) => cs[k]).map(([k, [l, c]]) => `<span class="chip ${c}" style="font-size:11px">${l} ${cs[k]}</span>`).join("")}</div>`);
+  if (e.util && (e.util.nodes.length || e.util.ifaces.length)) {
+    const lv = (x) => x == null ? "gray" : x >= 80 ? "critical" : x >= 60 ? "warning" : "normal";
+    out.push(`<div class="row small" style="gap:4px;flex-wrap:wrap"><span class="muted">사용률</span>${e.util.nodes.map((n) => `<span class="chip ${lv(Math.max(n.cpu_avg || 0, n.disk_avg || 0))}" style="font-size:11px">${esc(n.node)} CPU ${n.cpu_avg ?? "-"}% · 디스크 ${n.disk_avg ?? "-"}%</span>`).join("")}
+      ${e.util.ifaces.slice(0, 3).map((x) => `<span class="chip ${lv(x.util)}" style="font-size:11px">${esc(x.if)} ${x.util ?? "-"}%</span>`).join("")}</div>`);
+  }
   if (e.auto_logs) out.push('<div class="small muted">📄 로그를 고르지 않아 이 장비의 가장 최근 로그를 썼습니다.</div>');
   if (e.volumes_hidden) out.push(`<div class="small muted">🙈 SVM 루트·제외 설정 볼륨 ${e.volumes_hidden}개는 보고서에서 뺐습니다.</div>`);
   if (e.perf) out.push(`<div class="small">📈 성능 아카이브 <b>${esc(e.perf.file)}</b> · ${esc(e.perf.uploaded || "")} · 성능 진단 ${e.perf.findings}건 <a href="#" data-pv="${e.perf.id}">자세히</a></div>`);
@@ -538,7 +552,7 @@ async function editReportMeta(R, reload) {
     <div><label class="f">고객 양식</label><select id="m-tp"><option value="">(없음)</option>${tpls.map((t) => `<option value="${t.id}" ${t.id === R.template_id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div></div>
     <label class="f">장비</label><div class="row">${cust.equipment.map((e) => `<label class="chip gray"><input type="checkbox" class="m-eq" value="${e.id}" ${R.equipment_ids.includes(e.id) ? "checked" : ""}> ${esc(e.name)}</label>`).join("")}</div>
     <label class="f">로그</label><div style="max-height:200px;overflow:auto">${logs.map((l) => `<label class="file-row"><input type="checkbox" class="m-lg" value="${l.id}" ${R.log_ids.includes(l.id) ? "checked" : ""}><span class="grow">${esc(l.original_name)} <span class="small muted">${esc(l.equipment_name)} · ${esc(l.collected_at)}</span></span></label>`).join("")}</div>
-    <label class="row small" style="margin-top:10px;gap:6px"><input type="checkbox" id="m-pf" ${R.include_perf !== false ? "checked" : ""}> 성능 아카이브 분석 결과를 보고서에 넣기</label>
+    <label class="row small" style="margin-top:10px;gap:6px"><input type="checkbox" id="m-pf" ${R.include_perf !== false ? "checked" : ""}> 성능 아카이브 분석 결과를 보고서에 넣기 (특별점검 보고서만)</label>
     <p class="small muted">장비/로그를 바꾸면 분석이 다시 실행되고, 완료된 보고서는 '검토 중'으로 돌아가 최종 확정을 다시 받습니다.</p>
     <div class="actions"><button class="btn" data-close>취소</button><button class="btn primary" id="m-save">저장 · 재분석</button></div>`, "wide");
   $("#m-save", m).onclick = (e) => busy(e.target, async () => {
@@ -703,7 +717,7 @@ const customerForm = (c, done) => formModal(c ? "고객 수정" : "고객 신규
   async (d) => { const r = await api(c ? "customers/" + c.id : "customers", { method: c ? "PUT" : "POST", body: { ...d, legacy_customer_id: c?.legacy_customer_id || null } }); done(r); });
 const contactForm = (cid, ct, done) => formModal(ct ? "담당자 수정" : "전산 담당자 등록", [["name", "이름", "text", true], ["department", "부서"], ["position", "직책"], ["phone", "연락처"], ["email", "이메일", "email", false, true], ["receive_reports", "보고서 메일 수신", "check"], ["is_primary", "대표 담당자", "check"]], ct || { receive_reports: true },
   async (d) => { await api(ct ? "contacts/" + ct.id : `customers/${cid}/contacts`, { method: ct ? "PUT" : "POST", body: d }); done(); });
-const equipmentForm = (cid, e, done) => formModal(e ? "장비 수정" : "장비 등록", [["name", "시스템명/호스트명", "text", true], ["vendor", "제조사"], ["model", "모델 (로그에서 자동 인식)"], ["serial", "System S/N"], ["os_version", "OS 버전"], ["ha_type", "HA 구성 (예: HA Pair)"], ["disk_info", "디스크 (예: SAS 24EA)"], ["location", "위치"], ["contract_type", "계약 유형"], ["exclude_vols", "보고서에서 뺄 SVM·볼륨 (쉼표로 구분, * 사용 가능 · 예: svm01, svm02:vol_tmp*) — SVM 루트·vol0 는 자동 제외", "text", false, true], ["memo", "메모", "textarea", false, true]], e || { vendor: "NetApp" },
+const equipmentForm = (cid, e, done) => formModal(e ? "장비 수정" : "장비 등록", [["name", "시스템명/호스트명", "text", true], ["vendor", "제조사"], ["model", "모델 (로그에서 자동 인식)"], ["serial", "System S/N"], ["os_version", "OS 버전"], ["ha_type", "HA 구성 (예: HA Pair)"], ["disk_info", "디스크 (예: SAS 24EA)"], ["location", "위치"], ["contract_type", "계약 유형"], ["mgmt_host", "관리 IP (첫 로그에서 자동 수집 · 직접 수정 가능)"], ["exclude_vols", "보고서에서 뺄 SVM·볼륨 (쉼표로 구분, * 사용 가능 · 예: svm01, svm02:vol_tmp*) — SVM 루트·vol0 는 자동 제외", "text", false, true], ["memo", "메모", "textarea", false, true]], e || { vendor: "NetApp" },
   async (d) => { await api(e ? "equipment/" + e.id : `customers/${cid}/equipment`, { method: e ? "PUT" : "POST", body: { ...d, is_active: true } }); done(); });
 
 // PMS 고객 전체 목록 (개수 제한 없음). 여기서 바로 정/부 담당으로 연결합니다.
@@ -783,13 +797,13 @@ async function uploadPerf(eid, file, onProg) {
   return r;
 }
 // 장비 칸에 넣은 파일: perf_archive.7z 는 성능 분석으로, 나머지는 그 장비의 로그로 보관
-async function dropToEquipment(cid, eid, files, collectedAt, box) {
+async function dropToEquipment(cid, eid, files, collectedAt, box, note) {
   const perf = files.filter(isPerfFile), logs = files.filter((f) => !isPerfFile(f));
   const row = (name, msg) => `<div class="file-row">${SPIN}<b class="grow small">${esc(name)}</b><span class="small muted">${esc(msg)}</span></div>`;
   const done = { logs: [], perf: [] };
   if (logs.length) {
     box.innerHTML = row(logs.map((f) => f.name).join(", "), "로그 분석 중…");
-    const fd = new FormData(); logs.forEach((f) => fd.append("files", f)); fd.append("equipment_id", eid); if (collectedAt) fd.append("collected_at", collectedAt);
+    const fd = new FormData(); logs.forEach((f) => fd.append("files", f)); fd.append("equipment_id", eid); if (collectedAt) fd.append("collected_at", collectedAt); if (note) fd.append("note", note);
     done.logs = await api(`customers/${cid}/logs`, { method: "POST", form: fd });
     (done.logs[0]?.warnings || []).forEach((w) => toast(w, "err"));
     toast(`${done.logs.length}개 로그를 이 장비에 보관했습니다.`, "ok");
@@ -857,6 +871,7 @@ async function pageLogs(v, cid) {
       <div class="row" style="flex-wrap:wrap;gap:6px"><b>🗄️ ${esc(e.name)}</b><span class="small muted">${esc(e.model)} · S/N ${esc(e.serial || "-")}</span>${e.disposed ? '<span class="chip gray right">파기</span>' : ""}</div>
       <div class="small" style="margin-top:6px">${e.last_log ? `최근 로그 ${healthCell({ crit: e.last_log.crit, warn: e.last_log.warn })} <span class="muted">${esc(e.last_log.at)}</span>` : '<span class="muted">로그 없음</span>'}</div>
       <div class="small" style="margin-top:4px">${perfLine(e.last_perf)}</div>
+      <div class="row small" style="margin-top:4px;gap:6px;flex-wrap:wrap"><span class="muted">관리 IP</span><b class="mono">${esc(e.mgmt_host || (e.access || {}).cluster_mgmt || "-")}</b>${up && !e.disposed ? `<a class="btn sm right" href="#/collect/${cid}.${e.id}">📥 오프라인 수집</a>` : ""}</div>
       ${up && !e.disposed ? `<div class="drop" data-drop="${e.id}" style="margin-top:10px;padding:16px"><b>📥 ${esc(e.name)} 의 로그 · perf_archive.7z 를 여기로</b><div class="small muted">로그(.txt .log .zip .gz)는 로그 보관함에, perf_archive.7z 는 성능 분석으로 들어갑니다 · 아카이브 원본은 90일 뒤 자동 삭제</div><input type="file" multiple hidden></div><div data-up="${e.id}"></div>` : ""}</div>`).join("") || '<div class="card empty">장비가 없습니다. [고객 · 전산담당자]에서 장비를 먼저 등록하세요.</div>'}</div>
   <div class="card" style="margin-top:16px"><h3>📈 성능 아카이브 (perf_archive)</h3><div id="pl"></div></div>
   <div class="card" style="margin-top:16px"><h3>로그 타임라인</h3><div id="tl"></div></div>`;
@@ -1062,5 +1077,142 @@ async function pageSettings(v) {
     toast("테스트 메일을 보냈습니다.", "ok");
   });
 }
+
+// ───────────────────────── 오프라인 수집함 ─────────────────────────
+// 내부망(인터넷 안 되는 곳)에서도: 장비·정기/특별 선택 → 명령어 실행 → 출력·perf 파일을 이 PC 브라우저에 보관
+// 인터넷이 되는 곳에서 [올리기] 하면 장비별 로그·성능 아카이브로 들어갑니다. 별도 프로그램 없음.
+const OFF = {
+  db: null,
+  open() {
+    if (this.db) return this.db;
+    this.db = new Promise((ok, no) => {
+      if (!("indexedDB" in window)) return no(new Error("이 브라우저는 오프라인 보관을 지원하지 않습니다."));
+      const r = indexedDB.open("mrs-collect", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("items", { keyPath: "id", autoIncrement: true });
+      r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error || new Error("오프라인 보관함을 열 수 없습니다."));
+    });
+    return this.db;
+  },
+  async tx(mode, fn) {
+    const db = await this.open();
+    return new Promise((ok, no) => { const t = db.transaction("items", mode); const st = t.objectStore("items"); const r = fn(st); t.oncomplete = () => ok(r && r.result); t.onerror = () => no(t.error); t.onabort = () => no(t.error || new Error("저장 공간이 부족할 수 있습니다.")); });
+  },
+  add(it) { return this.tx("readwrite", (s) => s.add(it)); },
+  del(id) { return this.tx("readwrite", (s) => s.delete(id)); },
+  list() { return this.tx("readonly", (s) => s.getAll()).then((x) => (x || []).sort((a, b) => b.id - a.id)); },
+  async count() { try { return (await this.list()).length; } catch (_) { return 0; } },
+  // 담당 고객·장비·관리 IP·명령어 (온라인일 때 받아 두고, 오프라인에서 꺼내 씀)
+  cat() { try { return JSON.parse(localStorage.getItem("mrs-off-cat") || "null"); } catch (_) { return null; } },
+  async refresh(scope) {
+    const c = await api("collect/catalog" + (scope ? "?scope=" + scope : ""));
+    try { localStorage.setItem("mrs-off-cat", JSON.stringify(c)); } catch (_) {}
+    return c;
+  },
+  saveMe() { try { if (S.me) localStorage.setItem("mrs-off-me", JSON.stringify({ id: S.me.id, username: S.me.username, full_name: S.me.full_name, role_label: S.me.role_label, permissions: S.me.permissions })); } catch (_) {} },
+  me() { try { return JSON.parse(localStorage.getItem("mrs-off-me") || "null"); } catch (_) { return null; } },
+};
+const TYPE_KO = { regular: "정기점검", special: "특별점검" };
+async function updateCollectBadge() {
+  const b = $("#col-btn"); if (!b) return;
+  const n = await OFF.count(); b.innerHTML = `📥 수집함${n ? ` <b class="chip ${S.offline ? "gray" : ""}" style="font-size:11px;padding:1px 7px">${n}</b>` : ""}`;
+}
+function accessHtml(e) {
+  const a = e.access || {}; const L = [];
+  if (e.mgmt_host) L.push(["관리 IP", e.mgmt_host]);
+  if (a.cluster_mgmt && a.cluster_mgmt !== e.mgmt_host) L.push(["Cluster mgmt", a.cluster_mgmt]);
+  Object.entries(a.node_mgmt || {}).forEach(([n, ip]) => L.push([n + " node mgmt", ip]));
+  Object.entries(a.sp || {}).forEach(([n, ip]) => L.push([n + " SP", ip]));
+  if (!L.length) return '<div class="small muted">관리 IP가 아직 없습니다. 이 장비의 로그(network interface show 포함)를 한 번 올리면 자동으로 채워지고, [장비 수정]에서 직접 넣을 수도 있습니다.</div>';
+  const host = e.mgmt_host || a.cluster_mgmt || Object.values(a.node_mgmt || {})[0];
+  return `<div class="row small" style="gap:6px;flex-wrap:wrap">${L.map(([k, v]) => `<span class="chip gray">${esc(k)} <b class="mono">${esc(v)}</b></span>`).join("")}</div>
+    <div class="small muted" style="margin-top:4px">접속 예: <span class="mono">ssh admin@${esc(host)}</span> (PuTTY 등에서 세션 로그를 켜 두면 출력이 그대로 파일로 저장됩니다)</div>`;
+}
+async function pageCollect(v, arg) {
+  let cat = OFF.cat();
+  if (!S.offline) { try { cat = await OFF.refresh(S.colScope); } catch (e) { if (!cat) throw e; toast("최근에 받아 둔 장비 목록을 씁니다: " + e.message); } }
+  if (!cat) { v.innerHTML = '<div class="card empty"><div class="big">📥</div>인터넷이 되는 곳에서 MRS에 한 번 로그인해 [오프라인 수집함]을 열어 두어야 내부망에서 장비 목록을 쓸 수 있습니다.</div>'; return; }
+  const [ac, ae] = String(arg || "").split(".").map(Number);
+  let saved = null; try { saved = JSON.parse(localStorage.getItem("mrs-off-sel") || "null"); } catch (_) {}
+  const st = S.col = S.col || saved || { cid: null, eid: null, type: "regular" };
+  if (ac) { st.cid = ac; st.eid = ae || null; }
+  const cust = cat.customers.find((c) => c.id === st.cid) || cat.customers[0];
+  if (!cust) { v.innerHTML = '<div class="card empty">담당 고객이 없습니다.</div>'; return; }
+  st.cid = cust.id; const eq = cust.equipment.find((e) => e.id === st.eid) || cust.equipment[0]; st.eid = eq ? eq.id : null;
+  const script = (cat.cmd_scripts || {})[st.type] || "";
+  try { localStorage.setItem("mrs-off-sel", JSON.stringify(st)); } catch (_) {}
+  const online = !S.offline && navigator.onLine;
+  v.innerHTML = `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><b>${online ? "🟢 인터넷 연결됨" : "🟠 오프라인 (내부망)"}</b>
+      <span class="small muted">장비 목록 기준 ${esc(cat.at || "-")}${S.offline ? " · 수집만 가능, 올리기는 인터넷 연결 후" : ""}</span>
+      ${online ? `<label class="small row right" style="gap:6px"><input type="checkbox" id="col-all" ${S.colScope === "all" ? "checked" : ""}> 담당 아닌 고객도 보기</label>` : ""}</div>
+    <p class="small muted" style="margin:8px 0 0">① 고객·장비와 <b>정기점검/특별점검</b>을 고르면 그 장비의 관리 IP와 명령어가 나옵니다. ② PuTTY 등으로 접속해 명령어를 실행하고 ③ 출력 전체를 붙여 넣거나 저장한 파일·perf_archive.7z 를 넣어 [수집함에 담기]. 수집한 내용은 <b>이 PC 브라우저에만</b> 보관되며, 인터넷이 되는 곳에서 [올리기] 하면 장비별 로그·성능 아카이브로 들어갑니다.</p></div>
+  <div class="grid g2" style="margin-top:14px;align-items:start">
+    <div class="card"><h3>1. 장비 · 점검 종류</h3>
+      <div class="grid g2"><div><label class="f">고객</label><select id="col-c">${cat.customers.map((c) => `<option value="${c.id}" ${c.id === cust.id ? "selected" : ""}>${c.my_role ? (c.my_role === "main" ? "[정] " : "[부] ") : ""}${esc(c.name)}</option>`).join("")}</select></div>
+      <div><label class="f">장비</label><select id="col-e">${cust.equipment.map((e) => `<option value="${e.id}" ${e.id === st.eid ? "selected" : ""}>${esc(e.name)} (${esc(e.model || "-")})</option>`).join("") || "<option value=''>장비 없음</option>"}</select></div></div>
+      <div class="tabs" style="margin-top:12px"><button data-ty="regular" class="${st.type === "regular" ? "on" : ""}">정기점검 (평시)</button><button data-ty="special" class="${st.type === "special" ? "on" : ""}">특별점검 (평시 + 상세)</button></div>
+      ${eq ? `<div style="margin-bottom:10px"><div class="small muted" style="margin-bottom:4px">🗄️ ${esc(eq.name)} · S/N ${esc(eq.serial || "-")} · OS ${esc(eq.os_version || "-")}</div>${accessHtml(eq)}</div>` : ""}
+      <label class="f">${TYPE_KO[st.type]} 명령어 <span class="small muted">(CPU·디스크·네트워크 사용률 명령어 포함)</span></label>
+      <textarea id="col-sc" readonly style="min-height:260px;font-family:ui-monospace,Consolas,monospace;font-size:12px">${esc(script)}</textarea>
+      <div class="actions"><button class="btn" id="col-cp">📋 명령어 복사</button></div></div>
+    <div class="card"><h3>2. 출력 · 파일 넣기</h3>
+      <label class="f">수집 시점</label><input type="datetime-local" id="col-at" value="${nowLocal()}" style="max-width:240px">
+      <label class="f">명령어 출력 붙여넣기</label><textarea id="col-tx" placeholder="cluster1::> system node show ... 처럼 프롬프트가 포함된 출력 전체를 붙여 넣으세요" style="min-height:170px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
+      <div class="drop" id="col-drop" style="margin-top:10px;padding:14px"><b>📎 저장한 로그 파일 · perf_archive.7z</b><div class="small muted">여기로 끌어다 놓거나 클릭 (.txt .log .zip .gz .7z)</div><input type="file" multiple hidden></div>
+      <div id="col-files" class="small" style="margin-top:6px"></div>
+      <div class="actions"><button class="btn primary" id="col-add" ${eq ? "" : "disabled"}>📥 수집함에 담기</button></div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">수집함 (이 PC에 보관 중)</h3><span class="right"></span>${online ? '<button class="btn primary sm" id="col-upall">⬆ 모두 올리기</button>' : ""}</div><div id="col-list" style="margin-top:10px"></div></div>`;
+  let picked = [];
+  const showPicked = () => { $("#col-files").innerHTML = picked.map((f, i) => `<div class="file-row"><span class="grow">${isPerfFile(f) ? "📈" : "📄"} ${esc(f.name)} <span class="muted">${fmtSize(f.size)}</span></span><button class="btn sm" data-px="${i}">빼기</button></div>`).join("");
+    $$("[data-px]", v).forEach((b) => b.onclick = () => { picked.splice(+b.dataset.px, 1); showPicked(); }); };
+  setupDrop($("#col-drop"), $("#col-drop input"), (fs) => { picked = picked.concat(fs); showPicked(); });
+  $("#col-c").onchange = () => { st.cid = +$("#col-c").value; st.eid = null; pageCollect(v); };
+  $("#col-e").onchange = () => { st.eid = +$("#col-e").value; pageCollect(v); };
+  $$("[data-ty]", v).forEach((b) => b.onclick = () => { st.type = b.dataset.ty; pageCollect(v); });
+  $("#col-all") && ($("#col-all").onchange = () => { S.colScope = $("#col-all").checked ? "all" : ""; pageCollect(v); });
+  $("#col-cp").onclick = async () => { try { await navigator.clipboard.writeText(script); } catch (_) { $("#col-sc").select(); document.execCommand("copy"); } toast("명령어를 복사했습니다.", "ok"); };
+  $("#col-add").onclick = async () => {
+    const txt = $("#col-tx").value.trim();
+    if (!txt && !picked.length) return toast("출력을 붙여 넣거나 파일을 넣으세요.", "err");
+    const at = $("#col-at").value || nowLocal(); const base = { cid: cust.id, cname: cust.name, eid: eq.id, ename: eq.name, type: st.type, collected_at: at, saved_at: nowLocal() };
+    try {
+      if (txt) await OFF.add({ ...base, kind: "log", name: `${eq.name}_${st.type}_${at.replace(/[-:T]/g, "").slice(0, 12)}.txt`, blob: new Blob([txt], { type: "text/plain" }), size: new Blob([txt]).size });
+      for (const f of picked) await OFF.add({ ...base, kind: isPerfFile(f) ? "perf" : "log", name: f.name, blob: f, size: f.size });
+    } catch (e) { return toast("보관하지 못했습니다: " + e.message, "err"); }
+    toast(`${(txt ? 1 : 0) + picked.length}건을 수집함에 담았습니다.`, "ok");
+    $("#col-tx").value = ""; picked = []; showPicked(); listItems(); updateCollectBadge();
+  };
+  const listItems = async () => {
+    let items = []; try { items = await OFF.list(); } catch (e) { $("#col-list").innerHTML = `<div class="missing">${esc(e.message)}</div>`; return; }
+    $("#col-list").innerHTML = items.length ? `<div style="overflow:auto"><table class="t"><thead><tr><th>고객 · 장비</th><th>종류</th><th>파일</th><th>수집 시점</th><th></th></tr></thead><tbody>${items.map((it) => `<tr>
+      <td><b class="small">${esc(it.cname)}</b><div class="small muted">🗄️ ${esc(it.ename)}</div></td><td><span class="chip ${it.type === "special" ? "warning" : "gray"}">${TYPE_KO[it.type]}</span></td>
+      <td class="small">${it.kind === "perf" ? "📈" : "📄"} ${esc(it.name)} <span class="muted">${fmtSize(it.size)}</span><div data-ub="${it.id}"></div></td><td class="small">${esc(it.collected_at.replace("T", " "))}</td>
+      <td style="white-space:nowrap">${online ? `<button class="btn sm primary" data-ui="${it.id}">⬆ 올리기</button>` : ""}<button class="btn sm danger" data-di="${it.id}">삭제</button></td></tr>`).join("")}</tbody></table></div>`
+      : '<div class="small muted">수집함이 비어 있습니다.</div>';
+    $$("[data-di]", v).forEach((b) => b.onclick = async () => { if (await confirmBox("이 PC에서 수집 자료를 지울까요? (올리지 않은 자료는 되살릴 수 없습니다)")) { await OFF.del(+b.dataset.di); listItems(); updateCollectBadge(); } });
+    $$("[data-ui]", v).forEach((b) => b.onclick = () => busy(b, async () => { await uploadItem(items.find((x) => x.id === +b.dataset.ui)); listItems(); updateCollectBadge(); }));
+  };
+  const uploadItem = async (it) => {
+    const box = $(`[data-ub="${it.id}"]`, v) || document.createElement("div");
+    const f = it.blob instanceof File ? it.blob : new File([it.blob], it.name, { type: it.blob.type || "application/octet-stream" });
+    try { await dropToEquipment(it.cid, it.eid, [f], it.collected_at, box, `오프라인 수집함 · ${TYPE_KO[it.type]}`); }
+    catch (e) { box.innerHTML = `<span style="color:var(--red)">⚠️ ${esc(e.message)}</span>`; throw e; }
+    await OFF.del(it.id);
+  };
+  $("#col-upall") && ($("#col-upall").onclick = (e) => busy(e.target, async () => {
+    const items = await OFF.list(); let ok = 0, bad = 0;
+    for (const it of items.reverse()) { try { await uploadItem(it); ok++; } catch (_) { bad++; } }
+    toast(`올리기 완료 ${ok}건${bad ? ` · 실패 ${bad}건 (수집함에 남아 있습니다)` : ""}`, bad ? "err" : "ok");
+    await listItems(); updateCollectBadge();
+  }));
+  listItems();
+}
+// 오프라인 ↔ 온라인 전환: 인터넷이 다시 되면 로그인 상태를 확인하고 일반 화면으로
+addEventListener("online", async () => {
+  if (!S.offline) return updateCollectBadge();
+  try { const me = await api("auth/me"); S.me = me; S.offline = false; toast("인터넷에 연결되었습니다. 수집함 자료를 올릴 수 있습니다.", "ok"); render(); }
+  catch (e) { if (!(e instanceof TypeError)) { S.offline = false; S.me = null; render(); } }
+});
+addEventListener("offline", () => updateCollectBadge());
 
 boot();

@@ -5,7 +5,7 @@
 date_default_timezone_set('Asia/Seoul');
 mb_internal_encoding('UTF-8');
 const MRS_VERSION = '1.0.0';
-const SCHEMA_V = '3';
+const SCHEMA_V = '4';
 
 function cfg() {
     static $c = false;
@@ -87,7 +87,7 @@ function schema_sql($driver) {
         email VARCHAR(200), phone VARCHAR(50), receive_reports INT NOT NULL DEFAULT 1, is_primary INT NOT NULL DEFAULT 0, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_equipment (id $pk, customer_id INT NOT NULL, name VARCHAR(100) NOT NULL, vendor VARCHAR(50), model VARCHAR(100), serial VARCHAR(200),
         os_version VARCHAR(100), ha_type VARCHAR(50), disk_info VARCHAR(200), location VARCHAR(200), contract_type VARCHAR(100), memo TEXT, is_active INT NOT NULL DEFAULT 1,
-        disposed_at VARCHAR(19), dispose_note VARCHAR(500), exclude_vols VARCHAR(500), created_at VARCHAR(19), updated_at VARCHAR(19))$end";
+        disposed_at VARCHAR(19), dispose_note VARCHAR(500), exclude_vols VARCHAR(500), mgmt_host VARCHAR(200), access_info TEXT, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
     $t[] = "CREATE TABLE IF NOT EXISTS mrs_log_file (id $pk, customer_id INT NOT NULL, equipment_id INT, collected_at VARCHAR(19), original_name VARCHAR(300),
         stored_path VARCHAR(600), size_bytes INT NOT NULL DEFAULT 0, sha256 VARCHAR(64), parsed $T, note VARCHAR(500), uploaded_by INT,
         status VARCHAR(20), n_crit INT, n_warn INT, created_at VARCHAR(19), updated_at VARCHAR(19))$end";
@@ -126,7 +126,8 @@ function schema_sql($driver) {
 function install_schema($pdo, $driver) {
     // v1 → v2: 기존 테이블에 열 추가 (데이터는 그대로)
     // v2 → v3: 팀장(leader_id), 보고서 제외 볼륨, 성능 아카이브 포함 여부
-    $add = ['mrs_equipment' => ['disposed_at' => 'VARCHAR(19)', 'dispose_note' => 'VARCHAR(500)', 'exclude_vols' => 'VARCHAR(500)'], 'mrs_log_file' => ['status' => 'VARCHAR(20)', 'n_crit' => 'INT', 'n_warn' => 'INT'],
+    // v3 → v4: 장비 접속 정보 (관리 IP — 첫 로그에서 자동 수집, 직접 수정 가능)
+    $add = ['mrs_equipment' => ['disposed_at' => 'VARCHAR(19)', 'dispose_note' => 'VARCHAR(500)', 'exclude_vols' => 'VARCHAR(500)', 'mgmt_host' => 'VARCHAR(200)', 'access_info' => 'TEXT'], 'mrs_log_file' => ['status' => 'VARCHAR(20)', 'n_crit' => 'INT', 'n_warn' => 'INT'],
         'mrs_user' => ['leader_id' => 'INT'], 'mrs_report' => ['include_perf' => 'INT NOT NULL DEFAULT 1']];
     foreach ($add as $tb => $cols) {
         if (!has_table($tb)) continue;

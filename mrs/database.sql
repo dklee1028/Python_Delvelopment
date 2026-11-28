@@ -1,7 +1,8 @@
--- MRS 테이블 참고용 DDL (MariaDB, 스키마 v3). install.php 와 첫 접속 시 자동으로 만들고/추가하므로 직접 실행할 필요는 없습니다.
+-- MRS 테이블 참고용 DDL (MariaDB, 스키마 v4). install.php 와 첫 접속 시 자동으로 만들고/추가하므로 직접 실행할 필요는 없습니다.
 -- 기존 pms_ 테이블은 건드리지 않고 mrs_ 테이블만 추가합니다.
 -- v1 에서 올릴 때 자동으로 추가되는 열: mrs_equipment(disposed_at, dispose_note), mrs_log_file(status, n_crit, n_warn)
 -- v2 에서 올릴 때 자동으로 추가: mrs_user(leader_id), mrs_equipment(exclude_vols), mrs_report(include_perf), mrs_perf_archive 테이블
+-- v3 에서 올릴 때 자동으로 추가: mrs_equipment(mgmt_host, access_info)
 
 CREATE TABLE IF NOT EXISTS mrs_user (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(64) NOT NULL UNIQUE, full_name VARCHAR(100), email VARCHAR(200), phone VARCHAR(50),
         title VARCHAR(50), password_hash VARCHAR(255) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'engineer', permissions TEXT, is_active INT NOT NULL DEFAULT 1,
@@ -15,7 +16,7 @@ CREATE TABLE IF NOT EXISTS mrs_customer_contact (id INT AUTO_INCREMENT PRIMARY K
 
 CREATE TABLE IF NOT EXISTS mrs_equipment (id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, name VARCHAR(100) NOT NULL, vendor VARCHAR(50), model VARCHAR(100), serial VARCHAR(200),
         os_version VARCHAR(100), ha_type VARCHAR(50), disk_info VARCHAR(200), location VARCHAR(200), contract_type VARCHAR(100), memo TEXT, is_active INT NOT NULL DEFAULT 1,
-        disposed_at VARCHAR(19), dispose_note VARCHAR(500), exclude_vols VARCHAR(500), created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        disposed_at VARCHAR(19), dispose_note VARCHAR(500), exclude_vols VARCHAR(500), mgmt_host VARCHAR(200), access_info TEXT, created_at VARCHAR(19), updated_at VARCHAR(19)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS mrs_log_file (id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, equipment_id INT, collected_at VARCHAR(19), original_name VARCHAR(300),
         stored_path VARCHAR(600), size_bytes INT NOT NULL DEFAULT 0, sha256 VARCHAR(64), parsed MEDIUMTEXT, note VARCHAR(500), uploaded_by INT,

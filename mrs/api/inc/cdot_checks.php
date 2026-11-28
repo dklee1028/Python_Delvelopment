@@ -178,7 +178,7 @@ function cdot_eval($txt) {
 /* 보고서 종류에 맞는 항목: 정기 = 평시, 특별 = 평시 + 상세 */
 function cdot_items_for($type) { return array_values(array_filter(CDOT_CHECKS, function ($c) use ($type) { return $c['kind'] === 'base' || $type === 'special'; })); }
 function cdot_findings($checks, $type) {
-    $f = []; $skip = ['aggr', 'df', 'dfa', 'event', 'failover', 'broken', 'asup']; // 기존 로그 분석과 겹치는 항목은 제외
+    $f = []; $skip = ['aggr', 'df', 'dfa', 'event', 'failover', 'broken', 'asup', 'periodic', 'sysstat']; // CPU·디스크 사용률은 사용률 표(util)에서 따로 판정 // 기존 로그 분석과 겹치는 항목은 제외
     foreach (cdot_items_for($type) as $c) {
         $r = $checks[$c['id']] ?? null; if (!$r || !in_array($r['status'], ['warning', 'critical'], true) || in_array($c['id'], $skip, true)) continue;
         $f[] = ['severity' => $r['status'], 'category' => $c['group'], 'title' => $c['point'] . ' – ' . mb_substr($r['summary'], 0, 60), 'detail' => '명령어: ' . $c['cmd'],
@@ -190,5 +190,6 @@ function cdot_findings($checks, $type) {
 function cdot_command_script($type) {
     $L = []; $g = '';
     foreach (cdot_items_for($type) as $c) { if ($c['group'] !== $g) { $g = $c['group']; $L[] = "# [$g]"; } foreach (array_map('trim', explode(' / ', $c['cmd'])) as $x) $L[] = $x; }
+    foreach (util_commands() as $x) $L[] = $x;
     return implode("\n", $L);
 }

@@ -233,6 +233,17 @@ function p_system_compact($s, $ctx, $e, $y, $sw, $vl = 5, $fl = 3) {
 /* 성능 세부 분석 (perf_archive) — 지표 표 + 해석. 성능 아카이브가 있는 장비만 */
 const PERF_GROUP_KO = ['cpu' => 'CPU', 'latency' => '지연시간', 'ops' => 'IOPS', 'throughput' => '처리량', 'disk' => '디스크', 'net' => '네트워크', 'other' => '기타'];
 function perf_num($v) { if ($v === null) return '-'; $a = abs($v); return $a >= 1000 ? number_format($v, 0) : ($a >= 10 ? number_format($v, 1) : number_format($v, 2)); }
+/* 시스템 사용률 (CPU · 디스크 · 네트워크) — 정기·특별 공통, 로그의 sysstat/ifstat 출력 기준 */
+function p_util($s, $ctx, $e, $y, $sw, $lim = 8) {
+    $u = $e['util'] ?? null; if (!$u) return $y;
+    [$n, $i] = util_tables($u, $lim); if (!$n && !$i) return $y;
+    $m = M_(); $W = $sw - 2 * $m;
+    $y = k_section($s, $m, $y, $W, "시스템 사용률 (CPU · Disk · Network) – System {$e['seq']}");
+    if ($n) $y = k_table($s, $m, $y, $W, $n, ['col_w' => [1.6, 1.4, 1.4, 1.9, 0.8], 'size' => 7, 'row_h' => cm(0.45), 'status_col' => 4, 'align' => ['l', 'c', 'c', 'c', 'c']]) + cm(0.15);
+    if ($i) $y = k_table($s, $m, $y, $W, $i, ['col_w' => [1.5, 1.4, 0.7, 1.0, 1.0, 0.8, 0.8], 'size' => 7, 'row_h' => cm(0.42), 'status_col' => 6, 'align' => ['l', 'l', 'c', 'r', 'r', 'r', 'c']]) + cm(0.1);
+    k_text($s, $m, $y - cm(0.05), $W, cm(0.4), '※ 60% 이상 요주의, 80% 이상 위험 · 네트워크 사용률 = max(수신, 송신) ÷ 링크 속도', 6.5, false, C_GREY);
+    return $y + cm(0.45);
+}
 function p_perf($s, $ctx, $e, $y, $sw, $rowsLim = 10, $textLines = 14) {
     $pf = $e['perf']; if (!$pf) return $y;
     $m = M_(); $W = $sw - 2 * $m;
@@ -364,6 +375,7 @@ function build_inspection($ctx, $path) {
         $F['y'] = k_table($s, $m, $F['y'], $W, [['Model', "{$e['vendor']} {$e['model']}" . ($e['ha_type'] ? " ({$e['ha_type']})" : ''), 'System S/N', $e['serial']], ['OS Ver', $e['os_version'], 'Disk Type', $e['disk_info']]],
             ['col_w' => [1.2, 2.8, 1.2, 2.8], 'header' => false, 'label_cols' => [0, 2], 'size' => 8, 'row_h' => cm(0.55), 'align' => ['c', 'l', 'c', 'l']]) + cm(0.3);
         flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_detail($s, $ctx, $e, $y, $sw, 8, 5, 5); });
+        if (!empty($e['util'])) flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_util($s, $ctx, $e, $y, $sw, 8); });
         if (!empty($e['perf'])) { $F['title'] = '성능 세부 분석 (Performance)'; flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_perf($s, $ctx, $e, $y, $sw, 14, 22); }); }
         $F['title'] = '점검 결과 및 종합 의견';
     } else {
@@ -377,6 +389,7 @@ function build_inspection($ctx, $path) {
             if ($variant === 'multi') flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_compact($s, $ctx, $e, $y, $sw, 6, 5); }, cm(0.1));
             else flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_system_compact($s, $ctx, $e, $y, $sw); });
         }
+        foreach ($eqs as $e) if (!empty($e['util'])) flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_util($s, $ctx, $e, $y, $sw, 5); });
         foreach ($eqs as $e) if (!empty($e['perf'])) { $F['title'] = '성능 세부 분석 (Performance)'; flow_put($F, function ($s, $y) use ($ctx, $e, $sw) { return p_perf($s, $ctx, $e, $y, $sw, 8, 12); }); }
         $F['title'] = '종합 점검 결과 (Summary)';
         flow_checks($F, $ctx, $sw);

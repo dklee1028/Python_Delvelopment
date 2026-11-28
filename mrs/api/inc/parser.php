@@ -227,7 +227,7 @@ function parse_text($txt) {
     $res['system'] = $sys ?: new stdClass();
     $res['ha'] = $ha ?: new stdClass();
     // cDOT 점검 명령어별 결과 (정기=평시 / 특별=평시+상세)
-    if (preg_match('/^\s*[\w.\-]+::\*?>/m', $txt)) { $res['cdot'] = cdot_eval($txt); $res['os_mode'] = 'cdot'; }
+    if (preg_match('/^\s*[\w.\-]+::\*?>/m', $txt)) { $res['cdot'] = cdot_eval($txt); $res['os_mode'] = 'cdot'; $res['util'] = util_parse($txt); $res['access'] = access_parse($txt); }
     elseif (preg_match('/^\s*[\w.\-]+\*?>\s/m', $txt)) $res['os_mode'] = '7mode';
     $res['hw_hits'] = hw_scan($allLines);
     return $res;
@@ -271,6 +271,8 @@ function merge_parsed($list) {
         foreach ((array)($p['cdot'] ?? []) as $k => $v) $out['cdot'][$k] = $v;
         foreach ((array)($p['hw_hits'] ?? []) as $k => $v) $out['hw_hits'][$k] = array_slice(array_merge($out['hw_hits'][$k] ?? [], $v), 0, 3);
         if (!empty($p['os_mode'])) $out['os_mode'] = $p['os_mode'];
+        if (!empty($p['util'])) $out['util'] = util_merge($out['util'] ?? null, $p['util']);
+        if (!empty($p['access'])) $out['access'] = array_merge($out['access'] ?? [], array_filter($p['access']));
     }
     $aggr = array_values($aggr); usort($aggr, function ($a, $b) { return [$b['pct'], $a['name']] <=> [$a['pct'], $b['name']]; });
     $vols = array_values($vols); usort($vols, function ($a, $b) { return $b['pct'] <=> $a['pct']; });
