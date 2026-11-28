@@ -803,9 +803,9 @@ async function pageCustomers(v, id) {
   if (id) return customerDetail(v, +id);
   const users = can("customer.edit") ? await api("users").catch(() => []) : [];
   const mgrU = can("user.manage") || S.me.role === "manager"; // 정 담당 지정은 관리자·팀장
-  if (!S.custScope || S.custScope === "mine" || (S.custScope === "unassigned" && !mgrU)) S.custScope = "main";
+  if (!S.custScope || S.custScope === "mine") S.custScope = "main";
   v.innerHTML = `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px">
-      <div class="tabs" style="margin:0;border:0" id="sc">${[["main", "정 (내가 정 담당)"], ["sub", "부 (그 외 모든 사이트)"], ...(S.me.role === "manager" ? [["team", "우리 부서 고객"]] : []), ["all", "전체"], ...(mgrU ? [["unassigned", "정 담당 없음 (지정 필요)"]] : [])].map(([k, l]) => `<button data-sc="${k}" class="${S.custScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="tabs" style="margin:0;border:0" id="sc">${[["main", "정 (내가 정 담당)"], ["sub", "부 (그 외 모든 사이트)"], ...(S.me.role === "manager" ? [["team", "우리 부서 고객"]] : []), ["all", "전체"], ["unassigned", "정 담당 미지정"]].map(([k, l]) => `<button data-sc="${k}" class="${S.custScope === k ? "on" : ""}">${l}</button>`).join("")}</div>
       ${users.length ? `<select id="su" style="max-width:180px"><option value="">담당자별 정 사이트…</option>${users.filter((u) => u.is_active).map((u) => `<option value="user:${u.id}" ${S.custScope === "user:" + u.id ? "selected" : ""}>${esc(u.full_name || u.username)} (정 ${u.assigned.main})</option>`).join("")}</select>` : ""}
       <input type="search" id="cq" placeholder="고객명·주소 검색" style="max-width:240px">
       <span class="right"></span>${can("customer.edit") ? '<button class="btn sm" id="legacy">🔗 PMS 고객 불러오기</button><button class="btn sm primary" id="new-c">＋ 신규 고객</button>' : ""}</div>
