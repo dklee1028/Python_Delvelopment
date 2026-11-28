@@ -197,7 +197,7 @@ const SETTING_FIELDS = [
     'legacy_table' => ['기존 고객 테이블', 'text', false, 'pms_customers'],
 ];
 const SETTING_OPTIONS = [
-    'mail_method' => ['smtp' => '일반 SMTP (아이디·비밀번호)', 'm365' => 'Microsoft 365 (OAuth · Graph API)'],
+    'mail_method' => ['smtp' => '일반 SMTP (아이디·비밀번호)', 'php' => '호스팅 서버 메일 (카페24 등 · 설정 불필요)', 'm365' => 'Microsoft 365 (OAuth · Graph API)'],
     'smtp_security' => ['starttls' => 'STARTTLS (보통 587)', 'ssl' => 'SSL/TLS (보통 465)', 'none' => '사용 안 함 (보통 25)'],
 ];
 function conf($k) { $f = SETTING_FIELDS[$k]; return get_setting($k, $f[3]); }

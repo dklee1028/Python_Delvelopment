@@ -978,7 +978,7 @@ route('PUT', 'settings', function () use ($in) {
 });
 route('POST', 'settings/test-mail', function () use ($in) {
     need('settings.manage'); $to = trim((string)($in['to'] ?? '')); if (!filter_var($to, FILTER_VALIDATE_EMAIL)) fail('받는 주소를 확인하세요.');
-    try { $how = conf('mail_method') === 'm365' ? 'Microsoft 365' : 'SMTP'; mail_send([$to], [], "[MRS] 메일 설정 확인 ($how)", "MRS 메일 설정($how)이 정상입니다.", "<p>MRS 메일 설정(<b>$how</b>)이 정상입니다.</p>", []); } catch (Throwable $e) { fail('발송 실패: ' . $e->getMessage(), 502); }
+    try { $how = ['m365' => 'Microsoft 365', 'php' => '호스팅 서버 메일'][conf('mail_method')] ?? 'SMTP'; mail_send([$to], [], "[MRS] 메일 설정 확인 ($how)", "MRS 메일 설정($how)이 정상입니다.", "<p>MRS 메일 설정(<b>$how</b>)이 정상입니다.</p>", []); } catch (Throwable $e) { fail('발송 실패: ' . $e->getMessage(), 502); }
     out(['ok' => true]);
 });
 route('GET', 'health', function () use ($https, $base, $sdir) {

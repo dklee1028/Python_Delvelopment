@@ -87,12 +87,30 @@ function mime_build($from, $fromName, $to, $cc, $subject, $text, $html, $attachm
    mail_method = smtp  : 위의 smtp_send (아이디·비밀번호)
    mail_method = m365  : Microsoft 365 OAuth (Graph API sendMail, 클라이언트 자격 증명)
    회사 M365에 "보안 기본값"이 켜져 SMTP 로그인이 막혀도(535 5.7.139) 보안 정책을 바꾸지 않고 보낼 수 있습니다. */
+/* 호스팅 서버 메일(PHP mail): 카페24 등 웹호스팅이 외부 SMTP 포트를 막을 때. 서버의 sendmail(qmail)이 직접 보냅니다. 첨부파일 포함 */
+function php_mail_send($to, $cc, $subject, $text, $html, $attachments) {
+    if (!function_exists('mail')) throw new MailError('이 호스팅은 PHP mail() 기능을 막아 두었습니다. 다른 발송 방식을 쓰세요.');
+    $from = trim((string)conf('mail_from')); $fromName = conf('mail_from_name') ?: conf('company_name');
+    if (!filter_var($from, FILTER_VALIDATE_EMAIL)) throw new MailError('보내는 사람 주소를 입력하세요. (이 홈페이지 도메인의 메일 주소를 권장합니다)');
+    foreach (array_merge($to, $cc) as $a) if (!filter_var($a, FILTER_VALIDATE_EMAIL)) throw new MailError("메일 주소 형식이 올바르지 않습니다: $a");
+    $raw = mime_build($from, $fromName, $to, $cc, $subject, $text, $html, $attachments);
+    [$head, $body] = explode("\r\n\r\n", $raw, 2);
+    // mail() 이 To·Subject 를 직접 넣으므로 머리글에서는 뺍니다. 리눅스 sendmail/qmail 은 줄바꿈을 \n 으로 받아야 빈 줄이 생기지 않습니다
+    $hs = array_values(array_filter(explode("\r\n", $head), function ($l) { return !preg_match('/^(To|Subject):/i', $l); }));
+    $nl = DIRECTORY_SEPARATOR === '/' ? "\n" : "\r\n";
+    $ok = @mail(implode(', ', $to), enc_hdr($subject), str_replace("\r\n", $nl, $body), implode($nl, $hs), '-f' . $from);
+    if (!$ok && !@mail(implode(', ', $to), enc_hdr($subject), str_replace("\r\n", $nl, $body), implode($nl, $hs))) {
+        $e = error_get_last(); throw new MailError('호스팅 서버가 메일을 받지 않았습니다' . ($e ? ': ' . $e['message'] : '.') . ' 호스팅의 메일 발송 설정(발송 한도·차단)을 확인하세요.');
+    }
+}
 function mail_ready() {
+    if (conf('mail_method') === 'php') return function_exists('mail') && conf('mail_from') !== '';
     if (conf('mail_method') === 'm365') return conf('m365_tenant') !== '' && conf('m365_client_id') !== '' && conf('m365_client_secret') !== '' && conf('mail_from') !== '';
     return (bool)conf('smtp_host');
 }
 function mail_send($to, $cc, $subject, $text, $html, $attachments) {
     if (conf('mail_method') === 'm365') return graph_send($to, $cc, $subject, $text, $html, $attachments);
+    if (conf('mail_method') === 'php') return php_mail_send($to, $cc, $subject, $text, $html, $attachments);
     return smtp_send($to, $cc, $subject, $text, $html, $attachments);
 }
 
